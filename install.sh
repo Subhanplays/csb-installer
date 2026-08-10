@@ -1,492 +1,771 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -Eeuo pipefail
 
 # ============================================================
-#        PTERODACTYL PANEL + WINGS INSTALLER
-#        Beautiful CLI Installer
+# SUBHANPLAYS PTERODACTYL INSTALLER
+# Obsidian Terminal UI
 # ============================================================
 
-set -e
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+VM_DIR="$SCRIPT_DIR/vmdata"
 
-# -------------------- COLORS --------------------
+# ============================================================
+# COLORS
+# ============================================================
 
-RESET="\033[0m"
-BOLD="\033[1m"
-DIM="\033[2m"
+RESET='\033[0m'
+BOLD='\033[1m'
+DIM='\033[2m'
 
-RED="\033[31m"
-GREEN="\033[32m"
-YELLOW="\033[33m"
-BLUE="\033[34m"
-MAGENTA="\033[35m"
-CYAN="\033[36m"
-WHITE="\033[37m"
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+MAGENTA='\033[0;35m'
+CYAN='\033[0;36m'
+WHITE='\033[1;37m'
+GRAY='\033[0;90m'
 
-# -------------------- CONFIG --------------------
+# ============================================================
+# TERMINAL
+# ============================================================
 
-PTERO_INSTALLER="https://raw.githubusercontent.com/unnamed-boy07/pterodactyl/refs/heads/main/pterodactyl-cb"
+hide_cursor() {
+    printf '\033[?25l'
+}
 
-VERSION="1.0.0"
-AUTHOR="SubhanPlayz"
+show_cursor() {
+    printf '\033[?25h'
+}
 
-# -------------------- FUNCTIONS --------------------
+cleanup() {
+    show_cursor
+}
+
+trap cleanup EXIT
+
+trap 'echo; echo -e "${RED}${BOLD}✖ Installation stopped on line $LINENO.${RESET}"; show_cursor; exit 1' ERR
 
 clear_screen() {
-    clear
+    clear 2>/dev/null || printf '\033c'
 }
 
-banner() {
-    echo -e "${CYAN}"
-    echo "╔══════════════════════════════════════════════════════════════╗"
-    echo "║                                                              ║"
-    echo "║              PTERODACTYL INSTALLER                          ║"
-    echo "║                                                              ║"
-    echo "║              Panel • Wings • VM                              ║"
-    echo "║                                                              ║"
-    echo "╚══════════════════════════════════════════════════════════════╝"
-    echo -e "${RESET}"
-    echo -e "${DIM}                  Installer v${VERSION} • ${AUTHOR}${RESET}"
+pause() {
     echo
+    read -r -p "$(echo -e "${GRAY}Press Enter to continue...${RESET}")"
 }
+
+# ============================================================
+# SYSTEM INFORMATION
+# ============================================================
+
+get_cpu_usage() {
+    if command -v top >/dev/null 2>&1; then
+        top -bn1 2>/dev/null |
+            awk -F'id,' '/Cpu\(s\)/ {split($1,a,","); sub(/.* /,"",a[length(a)]); print int(100-a[length(a)])"%"; exit}'
+    else
+        echo "N/A"
+    fi
+}
+
+get_ram_usage() {
+    if command -v free >/dev/null 2>&1; then
+        free | awk '/Mem:/ {printf "%d%%", ($3/$2)*100}'
+    else
+        echo "N/A"
+    fi
+}
+
+get_disk_usage() {
+    df -h / 2>/dev/null | awk 'NR==2 {print $5}'
+}
+
+get_hostname() {
+    hostname 2>/dev/null || echo "unknown"
+}
+
+get_uptime() {
+    uptime -p 2>/dev/null | sed 's/^up //' || echo "unknown"
+}
+
+get_network_status() {
+    if command -v curl >/dev/null 2>&1 &&
+       curl -fsS --connect-timeout 2 https://1.1.1.1 >/dev/null 2>&1; then
+        echo -e "${GREEN}● CONNECTED${RESET}"
+    else
+        echo -e "${RED}● OFFLINE${RESET}"
+    fi
+}
+
+# ============================================================
+# SMALL UI HELPERS
+# ============================================================
 
 line() {
-    echo -e "${DIM}──────────────────────────────────────────────────────────────${RESET}"
+    echo -e "${GRAY}──────────────────────────────────────────────────────────────────────────────${RESET}"
+}
+
+section() {
+    echo
+    echo -e "${WHITE}${BOLD} ◉ $1${RESET}"
 }
 
 success() {
-    echo -e "${GREEN}✔${RESET} $1"
+    echo -e " ${GREEN}✓${RESET} $1"
 }
 
-error() {
-    echo -e "${RED}✖${RESET} $1"
-}
-
-info() {
-    echo -e "${CYAN}ℹ${RESET} $1"
+error_msg() {
+    echo -e " ${RED}✖${RESET} $1"
 }
 
 warning() {
-    echo -e "${YELLOW}⚠${RESET} $1"
+    echo -e " ${YELLOW}⚠${RESET} $1"
 }
 
-step() {
+info() {
+    echo -e " ${CYAN}➜${RESET} $1"
+}
+
+# ============================================================
+# TYPEWRITER
+# ============================================================
+
+type_text() {
+    local text="$1"
+    local delay="${2:-0.015}"
+    local i
+    local char
+
+    for ((i=0; i<${#text}; i++)); do
+        char="${text:i:1}"
+        printf '%s' "$char"
+        sleep "$delay"
+    done
+
     echo
-    echo -e "${MAGENTA}${BOLD}➜ $1${RESET}"
-    line
 }
 
-# Animated spinner
+# ============================================================
+# SPINNER
+# ============================================================
+
 spinner() {
-    local pid=$1
-    local message="$2"
-    local spin='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+    local message="$1"
+    local duration="${2:-2}"
+
+    local frames=(
+        '⠋'
+        '⠙'
+        '⠹'
+        '⠸'
+        '⠼'
+        '⠴'
+        '⠦'
+        '⠧'
+        '⠇'
+        '⠏'
+    )
+
+    local end=$((SECONDS + duration))
     local i=0
 
-    while kill -0 "$pid" 2>/dev/null; do
-        i=$(( (i + 1) % 10 ))
-        printf "\r${CYAN}%s${RESET} %s" "${spin:$i:1}" "$message"
-        sleep 0.1
+    hide_cursor
+
+    while (( SECONDS < end )); do
+        printf "\r${CYAN}${frames[i % ${#frames[@]}]}${RESET} ${message}   "
+        i=$((i + 1))
+        sleep 0.08
     done
 
-    printf "\r"
+    printf "\r\033[K"
+
+    show_cursor
 }
 
-# Animated command runner
-run_with_animation() {
+# ============================================================
+# PROGRESS BAR
+# ============================================================
+
+progress_bar() {
     local message="$1"
-    shift
+    local width=34
+    local i
+    local filled
+    local empty
+    local percent
 
-    "$@" >/tmp/ptero_installer.log 2>&1 &
-    local pid=$!
+    hide_cursor
 
-    spinner "$pid" "$message"
+    for ((i=0; i<=width; i++)); do
 
-    wait "$pid"
-    local status=$?
+        filled=$(printf '%*s' "$i" '' | tr ' ' '█')
+        empty=$(printf '%*s' "$((width-i))" '' | tr ' ' '░')
 
-    if [ $status -eq 0 ]; then
-        success "$message"
-    else
-        error "$message"
-        echo
-        echo -e "${RED}Last output:${RESET}"
-        tail -20 /tmp/ptero_installer.log || true
-        exit $status
-    fi
-}
+        percent=$((i * 100 / width))
 
-# Progress animation
-progress() {
-    local message="$1"
+        printf "\r ${CYAN}${message}${RESET} [${GREEN}${filled}${GRAY}${empty}${RESET}] ${WHITE}%3d%%${RESET}" "$percent"
 
-    echo -ne "${CYAN}${message}${RESET} "
-
-    for i in {1..20}; do
-        echo -ne "${GREEN}█${RESET}"
-        sleep 0.03
+        sleep 0.025
     done
 
-    echo -e " ${GREEN}DONE${RESET}"
+    printf "\n"
+
+    show_cursor
 }
 
-# -------------------- ROOT CHECK --------------------
+# ============================================================
+# MAIN LOGO
+# ============================================================
 
-check_root() {
-    if [ "$EUID" -ne 0 ]; then
-        error "Please run this script as root."
-        echo
-        echo "Example:"
-        echo -e "${CYAN}sudo $0 panel${RESET}"
-        exit 1
-    fi
-}
+logo() {
 
-# -------------------- DEPENDENCIES --------------------
+    echo -e "${CYAN}${BOLD}"
 
-install_dependencies() {
+    cat <<'EOF'
 
-    step "Checking system dependencies"
+███████╗██╗   ██╗██████╗ ██╗  ██╗ █████╗ ███╗   ██╗
+██╔════╝██║   ██║██╔══██╗██║  ██║██╔══██╗████╗  ██║
+███████╗██║   ██║██████╔╝███████║███████║██╔██╗ ██║
+╚════██║██║   ██║██╔═══╝ ██╔══██║██╔══██║██║╚██╗██║
+███████║╚██████╔╝██║     ██║  ██║██║  ██║██║ ╚████║
+╚══════╝ ╚═════╝ ╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝
 
-    export DEBIAN_FRONTEND=noninteractive
-
-    run_with_animation \
-        "Updating package lists..." \
-        apt update -y
-
-    run_with_animation \
-        "Installing required packages..." \
-        apt install -y curl ca-certificates git apt-transport-https
-
-    # Docker check
-    if ! command -v docker >/dev/null 2>&1; then
-
-        info "Docker is not installed."
-        echo
-
-        run_with_animation \
-            "Installing Docker..." \
-            bash -c 'curl -fsSL https://get.docker.com | sh'
-
-        systemctl enable docker >/dev/null 2>&1 || true
-        systemctl start docker >/dev/null 2>&1 || true
-
-        success "Docker installed."
-    else
-        success "Docker is already installed."
-    fi
-
-    # Docker Compose check
-    if docker compose version >/dev/null 2>&1; then
-        success "Docker Compose plugin detected."
-    elif command -v docker-compose >/dev/null 2>&1; then
-        success "docker-compose detected."
-    else
-
-        info "Docker Compose is not installed."
-
-        run_with_animation \
-            "Installing Docker Compose..." \
-            apt install -y docker-compose-plugin
-
-        success "Docker Compose installed."
-    fi
-
-    echo
-}
-
-# -------------------- PANEL --------------------
-
-install_panel() {
-
-    clear_screen
-    banner
-
-    step "Installing Pterodactyl Panel"
-
-    progress "Preparing installation"
-
-    install_dependencies
-
-    echo
-    info "Starting Pterodactyl installer..."
-    echo
-
-    bash <(curl -fsSL "$PTERO_INSTALLER")
-
-    echo
-    line
-    success "Pterodactyl Panel installation completed!"
-    line
-
-    echo
-    echo -e "${GREEN}${BOLD}Panel installation finished.${RESET}"
-    echo
-}
-
-# -------------------- WINGS --------------------
-
-install_wings() {
-
-    clear_screen
-    banner
-
-    step "Installing Pterodactyl Wings"
-
-    install_dependencies
-
-    step "Installing sshx"
-
-    if command -v sshx >/dev/null 2>&1; then
-        success "sshx is already installed."
-    else
-        curl -sSf https://sshx.io/get | sh -s run || true
-        success "sshx installation completed."
-    fi
-
-    step "Creating Wings directory"
-
-    mkdir -p /root/pterodactyl/wings
-    mkdir -p /etc/pterodactyl
-    mkdir -p /var/lib/pterodactyl
-    mkdir -p /var/log/pterodactyl
-    mkdir -p /tmp/pterodactyl
-
-    success "Directories created."
-
-    cd /root/pterodactyl/wings
-
-    step "Creating Docker Compose configuration"
-
-    cat > docker-compose.yml <<'EOF'
-version: '3.8'
-
-services:
-  wings:
-    image: ghcr.io/pterodactyl/wings:v1.6.1
-    restart: always
-
-    networks:
-      - wings0
-
-    ports:
-      - "8080:8080"
-      - "2022:2022"
-      - "443:443"
-
-    tty: true
-
-    environment:
-      TZ: "UTC"
-      WINGS_UID: 988
-      WINGS_GID: 988
-      WINGS_USERNAME: pterodactyl
-
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - /var/lib/docker/containers/:/var/lib/docker/containers/
-      - /etc/pterodactyl/:/etc/pterodactyl/
-      - /var/lib/pterodactyl/:/var/lib/pterodactyl/
-      - /var/log/pterodactyl/:/var/log/pterodactyl/
-      - /tmp/pterodactyl/:/tmp/pterodactyl/
-      - /etc/ssl/certs:/etc/ssl/certs:ro
-
-networks:
-  wings0:
-    name: wings0
-    driver: bridge
-
-    ipam:
-      config:
-        - subnet: 172.21.0.0/16
-
-    driver_opts:
-      com.docker.network.bridge.name: wings0
 EOF
 
-    success "docker-compose.yml created."
-
-    step "Starting Wings"
-
-    if docker compose version >/dev/null 2>&1; then
-        run_with_animation \
-            "Starting Wings container..." \
-            docker compose up -d
-    else
-        run_with_animation \
-            "Starting Wings container..." \
-            docker-compose up -d
-    fi
-
-    echo
-    line
-    echo -e "${GREEN}${BOLD}"
-    echo "          ✓ WINGS INSTALLATION COMPLETE"
     echo -e "${RESET}"
-    line
+}
+
+# ============================================================
+# HEADER
+# ============================================================
+
+header() {
+
+    echo -e "${WHITE}${BOLD}"
+    echo "╔══════════════════════════════════════════════════════════════════════════════╗"
+    echo "║              SUBHANPLAYS — PTERODACTYL INSTALLER                         ║"
+    echo "║              OBSIDIAN TERMINAL EDITION • v1.0                            ║"
+    echo "╚══════════════════════════════════════════════════════════════════════════════╝"
+    echo -e "${RESET}"
 
     echo
-    echo -e "${CYAN}${BOLD}Next Steps:${RESET}"
+    echo -e "${MAGENTA}${BOLD}              ★★★ PTERODACTYL DEPLOYMENT SYSTEM ★★★${RESET}"
     echo
-    echo -e "${WHITE}1.${RESET} Create your Wings node inside Pterodactyl."
-    echo -e "${WHITE}2.${RESET} Copy the generated Wings configuration."
-    echo -e "${WHITE}3.${RESET} Save it here:"
+
+    echo -e "${GRAY}◉ INSTALLER INFORMATION${RESET}"
+    echo -e "${GRAY}├─ Hostname          :${RESET} ${WHITE}$(get_hostname)${RESET}"
+    echo -e "${GRAY}├─ Uptime            :${RESET} ${WHITE}$(get_uptime)${RESET}"
+    echo -e "${GRAY}├─ Installer         :${RESET} ${CYAN}SubhanPlays Pterodactyl${RESET}"
+    echo -e "${GRAY}└─ Working Directory :${RESET} ${WHITE}$SCRIPT_DIR${RESET}"
+
+    line
+}
+
+# ============================================================
+# SYSTEM STATUS
+# ============================================================
+
+system_status() {
+
+    local cpu
+    local ram
+    local disk
+    local network
+
+    cpu="$(get_cpu_usage)"
+    ram="$(get_ram_usage)"
+    disk="$(get_disk_usage)"
+    network="$(get_network_status)"
+
+    section "SYSTEM STATUS"
+
     echo
-    echo -e "   ${YELLOW}/etc/pterodactyl/config.yml${RESET}"
-    echo
-    echo -e "${WHITE}4.${RESET} Restart Wings:"
-    echo
-    echo -e "   ${CYAN}cd /root/pterodactyl/wings${RESET}"
-    echo -e "   ${CYAN}docker compose up -d --force-recreate${RESET}"
-    echo
-    echo -e "${WHITE}5.${RESET} Check Wings:"
-    echo
-    echo -e "   ${CYAN}docker logs -f wings${RESET}"
+    echo -e "   ${WHITE}CPU Usage:${RESET}   ${CYAN}${cpu}${RESET}      ${WHITE}RAM Usage:${RESET}   ${CYAN}${ram}${RESET}"
+    echo -e "   ${WHITE}Disk Usage:${RESET}  ${CYAN}${disk}${RESET}      ${WHITE}Network:${RESET}    ${network}"
+
     echo
 }
 
-# -------------------- VM --------------------
+# ============================================================
+# ROOT
+# ============================================================
 
-install_vm() {
+need_root() {
+
+    if [[ "${EUID}" -ne 0 ]]; then
+
+        clear_screen
+
+        echo
+        echo -e "${YELLOW}${BOLD}Root privileges are required.${RESET}"
+        echo
+
+        spinner "Requesting root access" 2
+
+        exec sudo su -c "bash '$SCRIPT_DIR/install.sh' $*"
+    fi
+}
+
+# ============================================================
+# DOCKER
+# ============================================================
+
+install_docker() {
+
+    if command -v docker >/dev/null 2>&1; then
+        success "Docker is already installed."
+        return
+    fi
+
+    info "Docker was not detected."
+
+    spinner "Preparing Docker installation" 2
+
+    apt-get update -qq
+
+    apt-get install -y -qq \
+        ca-certificates \
+        curl >/dev/null
+
+    spinner "Downloading Docker installer" 2
+
+    curl -fsSL https://get.docker.com/ |
+        CHANNEL=stable bash >/dev/null 2>&1
+
+    systemctl enable --now docker 2>/dev/null || true
+
+    success "Docker installed successfully."
+}
+
+# ============================================================
+# DEBIAN VPS
+# ============================================================
+
+debian_vps() {
 
     clear_screen
-    banner
+    logo
+    header
 
-    step "Starting Debian VM"
+    section "DEPLOYMENT CONFIGURATION"
 
-    # Check Docker
-    if ! command -v docker >/dev/null 2>&1; then
-        error "Docker is not installed."
-        exit 1
-    fi
+    echo
+    echo -e " ${GRAY}├─ RAM        :${RESET} ${WHITE}7900 MB${RESET}"
+    echo -e " ${GRAY}├─ CPU        :${RESET} ${WHITE}3 Cores${RESET}"
+    echo -e " ${GRAY}├─ Disk       :${RESET} ${WHITE}100G${RESET}"
+    echo -e " ${GRAY}└─ Image      :${RESET} ${CYAN}nothingtheking/debian-vm${RESET}"
 
-    if ! docker info >/dev/null 2>&1; then
-        error "Docker daemon is not running."
+    echo
+
+    read -r -p "$(echo -e "${CYAN}${BOLD}➜ Start Debian VPS? [Y/n]: ${RESET}")" answer
+
+    answer="${answer:-Y}"
+
+    if [[ ! "$answer" =~ ^[Yy]$ ]]; then
+
+        error_msg "Debian VPS setup was declined."
+
         echo
-        echo "Try:"
-        echo -e "${CYAN}systemctl start docker${RESET}"
-        exit 1
+        warning "Continuing on the current system."
+
+        sleep 1
+
+        return
     fi
 
-    # VM storage
-    VM_DIR="$PWD/vmdata"
+    echo
+
+    install_docker
 
     mkdir -p "$VM_DIR"
 
+    progress_bar "Preparing Debian VPS"
+
+    spinner "Connecting to Debian VM" 2
+
     echo
-    echo -e "${CYAN}${BOLD}VM Configuration${RESET}"
     line
-    echo -e "  ${WHITE}RAM:${RESET}       7900 MB"
-    echo -e "  ${WHITE}CPU:${RESET}       3 cores"
-    echo -e "  ${WHITE}Disk:${RESET}      100 GB"
-    echo -e "  ${WHITE}Storage:${RESET}   $VM_DIR"
-    echo
 
-    # Check whether image exists
-    if ! docker image inspect nothingtheking/debian-vm >/dev/null 2>&1; then
-        info "Downloading Debian VM image..."
-        docker pull nothingtheking/debian-vm
-        echo
-        success "VM image downloaded."
-    else
-        success "Debian VM image already exists."
-    fi
+    echo -e "${GREEN}${BOLD}"
+    echo " ◉ DEBIAN VPS UPLINK"
+    echo -e "${RESET}"
+
+    echo -e " ${GRAY}├─ RAM        :${RESET} ${WHITE}7900 MB${RESET}"
+    echo -e " ${GRAY}├─ CPU        :${RESET} ${WHITE}3 Cores${RESET}"
+    echo -e " ${GRAY}├─ Disk       :${RESET} ${WHITE}100G${RESET}"
+    echo -e " ${GRAY}└─ Container  :${RESET} ${CYAN}nothingtheking/debian-vm${RESET}"
+
+    line
 
     echo
-    step "Starting Debian VM"
 
-    echo
-    info "Starting VM..."
-    echo
+    cd "$SCRIPT_DIR"
 
-    docker run \
-        --name debian-vm \
-        --restart unless-stopped \
-        -it \
-        -v "$VM_DIR:/vmdata" \
+    docker run -it --rm \
+        -v "$PWD/vmdata:/vmdata" \
         -e RAM=7900 \
         -e CPU=3 \
         -e DISK_SIZE=100G \
         nothingtheking/debian-vm
 
-    EXIT_CODE=$?
+    echo
+
+    success "Returned from Debian VPS."
+
+    sleep 1
+}
+
+# ============================================================
+# SCRIPT LAUNCHER
+# ============================================================
+
+run_script() {
+
+    local script="$1"
+
+    shift || true
+
+    if [[ ! -f "$SCRIPT_DIR/$script" ]]; then
+
+        error_msg "Missing script: $script"
+
+        echo
+        echo -e "${GRAY}Expected:${RESET} $SCRIPT_DIR/$script"
+
+        pause
+
+        return 1
+    fi
+
+    chmod +x "$SCRIPT_DIR/$script" 2>/dev/null || true
 
     echo
 
-    if [ "$EXIT_CODE" -eq 0 ]; then
-        success "Debian VM stopped normally."
+    spinner "Connecting to $script" 2
+
+    echo
+
+    bash "$SCRIPT_DIR/$script" "$@"
+}
+
+# ============================================================
+# SERVICE STATUS
+# ============================================================
+
+service_status() {
+
+    clear_screen
+    logo
+    header
+
+    section "SERVICE STATUS"
+
+    echo
+
+    echo -e "${WHITE} NGINX${RESET}"
+
+    if systemctl is-active --quiet nginx 2>/dev/null; then
+        echo -e " └─ Status: ${GREEN}● ACTIVE${RESET}"
     else
-        error "Debian VM exited with code $EXIT_CODE."
+        echo -e " └─ Status: ${RED}● INACTIVE${RESET}"
     fi
 
     echo
-    echo -e "${CYAN}${BOLD}VM Commands${RESET}"
+
+    echo -e "${WHITE} PTERODACTYL QUEUE${RESET}"
+
+    if systemctl is-active --quiet pteroq 2>/dev/null; then
+        echo -e " └─ Status: ${GREEN}● ACTIVE${RESET}"
+    else
+        echo -e " └─ Status: ${RED}● INACTIVE${RESET}"
+    fi
+
+    echo
+
+    echo -e "${WHITE} WINGS${RESET}"
+
+    if systemctl is-active --quiet wings 2>/dev/null; then
+        echo -e " └─ Status: ${GREEN}● ACTIVE${RESET}"
+    else
+        echo -e " └─ Status: ${RED}● INACTIVE${RESET}"
+    fi
+
+    echo
+
     line
-    echo
-    echo -e "${WHITE}Start:${RESET}"
-    echo -e "  ${CYAN}docker start -ai debian-vm${RESET}"
-    echo
-    echo -e "${WHITE}Logs:${RESET}"
-    echo -e "  ${CYAN}docker logs debian-vm${RESET}"
-    echo
-    echo -e "${WHITE}Status:${RESET}"
-    echo -e "  ${CYAN}docker ps -a --filter name=debian-vm${RESET}"
-    echo
+
+    pause
 }
 
-# -------------------- MENU --------------------
+# ============================================================
+# MAIN MENU
+# ============================================================
 
 menu() {
 
     while true; do
 
         clear_screen
-        banner
 
-        echo -e "${BOLD}${WHITE}Choose an installation option:${RESET}"
-        echo
+        logo
+        header
+        system_status
 
-        echo -e "  ${CYAN}[1]${RESET} Install Pterodactyl Panel"
-        echo -e "  ${CYAN}[2]${RESET} Install Wings"
-        echo -e "  ${CYAN}[3]${RESET} Start Debian VM"
-        echo -e "  ${CYAN}[4]${RESET} Install Panel + Wings"
-        echo -e "  ${RED}[5]${RESET} Exit"
+        section "DEPLOYMENT & SERVICES"
 
         echo
+        echo -e " ${GRAY}├─${RESET} ${CYAN}[1]${RESET} ${GREEN}Pterodactyl Panel${RESET}       ${GRAY}├─${RESET} ${CYAN}[5]${RESET} ${MAGENTA}Panel Settings${RESET}"
+        echo -e " ${GRAY}├─${RESET} ${CYAN}[2]${RESET} ${BLUE}Wings${RESET}                   ${GRAY}├─${RESET} ${CYAN}[6]${RESET} ${CYAN}System Status${RESET}"
+        echo -e " ${GRAY}├─${RESET} ${CYAN}[3]${RESET} ${YELLOW}Update Panel + Wings${RESET}    ${GRAY}├─${RESET} ${CYAN}[7]${RESET} ${WHITE}Restart Services${RESET}"
+        echo -e " ${GRAY}└─${RESET} ${CYAN}[4]${RESET} ${RED}Remove Panel / Wings${RESET}    ${GRAY}└─${RESET} ${CYAN}[8]${RESET} ${WHITE}Debian VPS${RESET}"
+
+        echo
+
+        section "MAINTENANCE & TOOLS"
+
+        echo
+        echo -e " ${GRAY}├─${RESET} ${CYAN}[9]${RESET} ${WHITE}Installer Diagnostics${RESET}"
+        echo -e " ${GRAY}└─${RESET} ${RED}[0]${RESET} ${BOLD}SHUTDOWN INSTALLER${RESET}"
+
+        echo
+
         line
-        echo
 
-        read -rp "$(echo -e "${MAGENTA}➜${RESET} Select an option: ")" choice
+        echo
+        read -r -p "$(echo -e "${CYAN}${BOLD}➜ Enter Option (0-9): ${RESET}")" choice
 
         case "$choice" in
 
             1)
-                install_panel
-                read -rp "Press Enter to continue..."
+
+                clear_screen
+                logo
+                header
+
+                echo
+                echo -e "${GREEN}${BOLD}◉ PTERODACTYL PANEL DEPLOYMENT${RESET}"
+                echo
+
+                progress_bar "Initializing Panel installer"
+
+                run_script panel.sh
+
+                pause
+
                 ;;
 
             2)
-                install_wings
-                read -rp "Press Enter to continue..."
+
+                clear_screen
+                logo
+                header
+
+                echo
+                echo -e "${BLUE}${BOLD}◉ WINGS DEPLOYMENT${RESET}"
+                echo
+
+                progress_bar "Initializing Wings installer"
+
+                run_script wings.sh
+
+                pause
+
                 ;;
 
             3)
-                install_vm
+
+                clear_screen
+                logo
+                header
+
+                echo
+                echo -e "${YELLOW}${BOLD}◉ PANEL + WINGS UPDATE${RESET}"
+                echo
+
+                progress_bar "Initializing update process"
+
+                run_script update.sh
+
+                pause
+
                 ;;
 
             4)
-                install_panel
-                install_wings
-                read -rp "Press Enter to continue..."
+
+                clear_screen
+                logo
+                header
+
+                echo
+                echo -e "${RED}${BOLD}◉ PTERODACTYL REMOVAL${RESET}"
+                echo
+
+                warning "This operation may remove installed Pterodactyl components."
+
+                echo
+
+                read -r -p "$(echo -e "${RED}${BOLD}Continue? [y/N]: ${RESET}")" confirm
+
+                if [[ "$confirm" =~ ^[Yy]$ ]]; then
+
+                    progress_bar "Initializing removal manager"
+
+                    run_script remove.sh
+
+                else
+
+                    warning "Removal cancelled."
+
+                fi
+
+                pause
+
                 ;;
 
             5)
+
+                clear_screen
+                logo
+                header
+
                 echo
-                echo -e "${GREEN}Thanks for using the installer!${RESET}"
+                echo -e "${MAGENTA}${BOLD}◉ PANEL SETTINGS${RESET}"
+                echo
+
+                progress_bar "Initializing settings manager"
+
+                run_script change.sh
+
+                pause
+
+                ;;
+
+            6)
+
+                service_status
+
+                ;;
+
+            7)
+
+                clear_screen
+                logo
+                header
+
+                section "SERVICE RESTART"
+
+                echo
+
+                spinner "Restarting Nginx" 1
+                systemctl restart nginx 2>/dev/null || true
+
+                spinner "Restarting Pterodactyl Queue" 1
+                systemctl restart pteroq 2>/dev/null || true
+
+                spinner "Restarting Wings" 1
+                systemctl restart wings 2>/dev/null || true
+
+                echo
+
+                success "Service restart sequence completed."
+
+                pause
+
+                ;;
+
+            8)
+
+                debian_vps
+
+                pause
+
+                ;;
+
+            9)
+
+                clear_screen
+                logo
+                header
+
+                section "INSTALLER DIAGNOSTICS"
+
+                echo
+
+                echo -e " ${GRAY}├─ Bash Version :${RESET} ${WHITE}${BASH_VERSION}${RESET}"
+                echo -e " ${GRAY}├─ Hostname     :${RESET} ${WHITE}$(get_hostname)${RESET}"
+                echo -e " ${GRAY}├─ CPU Usage    :${RESET} ${CYAN}$(get_cpu_usage)${RESET}"
+                echo -e " ${GRAY}├─ RAM Usage    :${RESET} ${CYAN}$(get_ram_usage)${RESET}"
+                echo -e " ${GRAY}├─ Disk Usage   :${RESET} ${CYAN}$(get_disk_usage)${RESET}"
+                echo -e " ${GRAY}├─ Docker       :${RESET} $(command -v docker >/dev/null 2>&1 && echo -e "${GREEN}INSTALLED${RESET}" || echo -e "${RED}NOT INSTALLED${RESET}")"
+                echo -e " ${GRAY}└─ Network      :${RESET} $(get_network_status)"
+
+                echo
+
+                if [[ -f "$SCRIPT_DIR/panel.sh" ]]; then
+                    success "panel.sh detected."
+                else
+                    error_msg "panel.sh missing."
+                fi
+
+                if [[ -f "$SCRIPT_DIR/wings.sh" ]]; then
+                    success "wings.sh detected."
+                else
+                    error_msg "wings.sh missing."
+                fi
+
+                if [[ -f "$SCRIPT_DIR/change.sh" ]]; then
+                    success "change.sh detected."
+                else
+                    warning "change.sh missing."
+                fi
+
+                if [[ -f "$SCRIPT_DIR/update.sh" ]]; then
+                    success "update.sh detected."
+                else
+                    warning "update.sh missing."
+                fi
+
+                if [[ -f "$SCRIPT_DIR/remove.sh" ]]; then
+                    success "remove.sh detected."
+                else
+                    warning "remove.sh missing."
+                fi
+
+                echo
+
+                line
+
+                pause
+
+                ;;
+
+            0)
+
+                clear_screen
+
+                echo
+
+                spinner "Shutting down SubhanPlays Installer" 2
+
+                echo
+
+                echo -e "${GREEN}${BOLD}"
+                echo "╔══════════════════════════════════════════════════════════════╗"
+                echo "║        SUBHANPLAYS INSTALLER SHUTDOWN COMPLETE             ║"
+                echo "╚══════════════════════════════════════════════════════════════╝"
+                echo -e "${RESET}"
+
+                echo
+
                 exit 0
+
                 ;;
 
             *)
-                error "Invalid option."
+
+                error_msg "Invalid option: $choice"
                 sleep 1
+
                 ;;
 
         esac
@@ -494,50 +773,52 @@ menu() {
     done
 }
 
-# -------------------- MAIN --------------------
+# ============================================================
+# STARTUP
+# ============================================================
 
-check_root
+startup() {
 
-case "${1:-}" in
+    clear_screen
 
-    panel)
-        install_panel
-        ;;
+    hide_cursor
 
-    wings)
-        install_wings
-        ;;
+    echo
 
-    vm)
-        install_vm
-        ;;
+    logo
 
-    all)
-        install_panel
-        install_wings
-        ;;
+    echo
+    echo -e "${CYAN}${BOLD}"
 
-    "")
-        menu
-        ;;
+    type_text "Initializing SubhanPlays Pterodactyl Installer..." 0.018
 
-    *)
-        clear_screen
-        banner
+    echo -e "${RESET}"
 
-        error "Unknown option: $1"
+    sleep 0.3
 
-        echo
-        echo -e "${BOLD}Usage:${RESET}"
-        echo
-        echo -e "  ${CYAN}sudo $0${RESET}              Interactive menu"
-        echo -e "  ${CYAN}sudo $0 panel${RESET}       Install Panel"
-        echo -e "  ${CYAN}sudo $0 wings${RESET}       Install Wings"
-        echo -e "  ${CYAN}sudo $0 vm${RESET}          Start Debian VM"
-        echo -e "  ${CYAN}sudo $0 all${RESET}         Install Panel + Wings"
-        echo
+    progress_bar "Loading installer modules"
 
-        exit 1
-        ;;
+    spinner "Checking environment" 2
 
-esac
+    success "Installer modules loaded."
+
+    spinner "Preparing deployment interface" 1
+
+    echo
+
+    show_cursor
+
+    sleep 0.5
+}
+
+# ============================================================
+# MAIN
+# ============================================================
+
+need_root "$@"
+
+startup
+
+debian_vps
+
+menu
