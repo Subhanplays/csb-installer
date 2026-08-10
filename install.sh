@@ -6,20 +6,23 @@ set -Eeuo pipefail
 # Obsidian Terminal UI
 # ============================================================
 
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-VM_DIR="$SCRIPT_DIR/vmdata"
-
 # ============================================================
-# GITHUB RAW SOURCE
+# GITHUB SOURCE
 # ============================================================
 
 GITHUB_RAW="https://raw.githubusercontent.com/Subhanplays/csb-installer/main"
+INSTALLER_URL="${GITHUB_RAW}/install.sh"
 
 # ============================================================
-# TEMPORARY INSTALLER DIRECTORY
+# WORKING DIRECTORY
 # ============================================================
 
-TEMP_DIR="$(mktemp -d /tmp/subhanplays-installer.XXXXXX)"
+INSTALLER_WORK_DIR="/tmp/subhanplays-installer"
+TEMP_DIR="${INSTALLER_WORK_DIR}/modules"
+VM_DIR="${INSTALLER_WORK_DIR}/vmdata"
+
+mkdir -p "$INSTALLER_WORK_DIR"
+mkdir -p "$TEMP_DIR"
 
 # ============================================================
 # COLORS
@@ -51,10 +54,22 @@ show_cursor() {
 }
 
 cleanup() {
+
     show_cursor
 
+    # Remove downloaded module scripts
     if [[ -d "$TEMP_DIR" ]]; then
         rm -rf "$TEMP_DIR"
+    fi
+
+    # Remove temporary VM working directory
+    if [[ -d "$VM_DIR" ]]; then
+        rm -rf "$VM_DIR"
+    fi
+
+    # Remove main temporary installer directory
+    if [[ -d "$INSTALLER_WORK_DIR" ]]; then
+        rm -rf "$INSTALLER_WORK_DIR"
     fi
 }
 
@@ -88,7 +103,9 @@ get_cpu_usage() {
             }'
 
     else
+
         echo "N/A"
+
     fi
 }
 
@@ -97,11 +114,16 @@ get_ram_usage() {
     if command -v free >/dev/null 2>&1; then
 
         free | awk '/Mem:/ {
-            printf "%d%%", ($3/$2)*100
+            if ($2 > 0)
+                printf "%d%%", ($3/$2)*100
+            else
+                print "N/A"
         }'
 
     else
+
         echo "N/A"
+
     fi
 }
 
@@ -109,11 +131,13 @@ get_disk_usage() {
 
     df -h / 2>/dev/null |
         awk 'NR==2 {print $5}'
+
 }
 
 get_hostname() {
 
     hostname 2>/dev/null || echo "unknown"
+
 }
 
 get_uptime() {
@@ -121,15 +145,17 @@ get_uptime() {
     uptime -p 2>/dev/null |
         sed 's/^up //' ||
         echo "unknown"
+
 }
 
 get_network_status() {
 
     if command -v curl >/dev/null 2>&1 &&
-        curl -fsS \
-        --connect-timeout 2 \
-        --max-time 4 \
-        https://1.1.1.1 >/dev/null 2>&1; then
+        curl \
+            -fsS \
+            --connect-timeout 2 \
+            --max-time 4 \
+            https://1.1.1.1 >/dev/null 2>&1; then
 
         echo -e "${GREEN}● CONNECTED${RESET}"
 
@@ -141,38 +167,44 @@ get_network_status() {
 }
 
 # ============================================================
-# SMALL UI HELPERS
+# UI HELPERS
 # ============================================================
 
 line() {
 
     echo -e "${GRAY}──────────────────────────────────────────────────────────────────────────────${RESET}"
+
 }
 
 section() {
 
     echo
     echo -e "${WHITE}${BOLD} ◉ $1${RESET}"
+
 }
 
 success() {
 
     echo -e " ${GREEN}✓${RESET} $1"
+
 }
 
 error_msg() {
 
     echo -e " ${RED}✖${RESET} $1"
+
 }
 
 warning() {
 
     echo -e " ${YELLOW}⚠${RESET} $1"
+
 }
 
 info() {
 
     echo -e " ${CYAN}➜${RESET} $1"
+
 }
 
 # ============================================================
@@ -198,6 +230,7 @@ type_text() {
     done
 
     echo
+
 }
 
 # ============================================================
@@ -240,6 +273,7 @@ spinner() {
     printf "\r\033[K"
 
     show_cursor
+
 }
 
 # ============================================================
@@ -266,7 +300,9 @@ progress_bar() {
 
         percent=$((i * 100 / width))
 
-        printf "\r ${CYAN}${message}${RESET} [${GREEN}${filled}${GRAY}${empty}${RESET}] ${WHITE}%3d%%${RESET}" "$percent"
+        printf \
+            "\r ${CYAN}${message}${RESET} [${GREEN}${filled}${GRAY}${empty}${RESET}] ${WHITE}%3d%%${RESET}" \
+            "$percent"
 
         sleep 0.025
 
@@ -275,10 +311,11 @@ progress_bar() {
     printf "\n"
 
     show_cursor
+
 }
 
 # ============================================================
-# MAIN LOGO
+# SUBHAN LOGO
 # ============================================================
 
 logo() {
@@ -286,17 +323,19 @@ logo() {
     echo -e "${CYAN}${BOLD}"
 
     cat <<'EOF'
- ░██████              ░██        ░██
- ░██   ░██             ░██        ░██
+
+░██████              ░██        ░██
+░██   ░██             ░██        ░██
 ░██         ░██    ░██ ░████████  ░████████   ░██████   ░████████
- ░████████  ░██    ░██ ░██    ░██ ░██    ░██       ░██  ░██    ░██
-        ░██ ░██    ░██ ░██    ░██ ░██    ░██  ░███████  ░██    ░██
- ░██   ░██  ░██   ░███ ░███   ░██ ░██    ░██ ░██   ░██  ░██    ░██
-  ░██████    ░█████░██ ░██░█████  ░██    ░██  ░█████░██ ░██    ░██
+░████████  ░██    ░██ ░██    ░██ ░██    ░██       ░██  ░██    ░██
+░██ ░██    ░██ ░██    ░██ ░██    ░██  ░███████  ░██    ░██    ░██
+░██   ░██  ░██   ░███ ░███   ░██ ░██    ░██ ░██   ░██  ░██    ░██
+░██████    ░█████░██ ░██░█████  ░██    ░██  ░█████░██ ░██    ░██
 
 EOF
 
     echo -e "${RESET}"
+
 }
 
 # ============================================================
@@ -315,7 +354,9 @@ header() {
     echo -e "${RESET}"
 
     echo
+
     echo -e "${MAGENTA}${BOLD}              ★★★ PTERODACTYL DEPLOYMENT SYSTEM ★★★${RESET}"
+
     echo
 
     echo -e "${GRAY}◉ INSTALLER INFORMATION${RESET}"
@@ -324,9 +365,10 @@ header() {
     echo -e "${GRAY}├─ Uptime            :${RESET} ${WHITE}$(get_uptime)${RESET}"
     echo -e "${GRAY}├─ Installer         :${RESET} ${CYAN}SubhanPlays Pterodactyl${RESET}"
     echo -e "${GRAY}├─ Source            :${RESET} ${CYAN}${GITHUB_RAW}${RESET}"
-    echo -e "${GRAY}└─ Working Directory :${RESET} ${WHITE}$SCRIPT_DIR${RESET}"
+    echo -e "${GRAY}└─ Working Directory :${RESET} ${WHITE}${INSTALLER_WORK_DIR}${RESET}"
 
     line
+
 }
 
 # ============================================================
@@ -354,6 +396,7 @@ system_status() {
     echo -e "   ${WHITE}Disk Usage:${RESET}  ${CYAN}${disk}${RESET}      ${WHITE}Network:${RESET}    ${network}"
 
     echo
+
 }
 
 # ============================================================
@@ -367,14 +410,33 @@ need_root() {
         clear_screen
 
         echo
+
         echo -e "${YELLOW}${BOLD}Root privileges are required.${RESET}"
+
         echo
 
         spinner "Requesting root access" 2
 
-        exec sudo -E bash "$SCRIPT_DIR/install.sh" "$@"
+        if ! command -v sudo >/dev/null 2>&1; then
+
+            error_msg "sudo is not installed."
+
+            echo
+
+            echo -e "${GRAY}Run this installer as root.${RESET}"
+
+            exit 1
+
+        fi
+
+        # Re-run the installer from GitHub as root.
+        exec sudo -E bash -c \
+            'bash <(curl -fsSL "$1")' \
+            _ \
+            "$INSTALLER_URL"
 
     fi
+
 }
 
 # ============================================================
@@ -409,6 +471,7 @@ install_docker() {
     systemctl enable --now docker 2>/dev/null || true
 
     success "Docker installed successfully."
+
 }
 
 # ============================================================
@@ -434,7 +497,9 @@ debian_vps() {
 
     echo
 
-    read -r -p "$(echo -e "${CYAN}${BOLD}➜ Start Debian VPS? [Y/n]: ${RESET}")" answer
+    read -r -p \
+        "$(echo -e "${CYAN}${BOLD}➜ Start Debian VPS? [Y/n]: ${RESET}")" \
+        answer
 
     answer="${answer:-Y}"
 
@@ -449,6 +514,7 @@ debian_vps() {
         sleep 1
 
         return
+
     fi
 
     echo
@@ -480,10 +546,8 @@ debian_vps() {
 
     echo
 
-    cd "$SCRIPT_DIR"
-
     docker run -it --rm \
-        -v "$PWD/vmdata:/vmdata" \
+        -v "$VM_DIR:/vmdata" \
         -e RAM=7900 \
         -e CPU=3 \
         -e DISK_SIZE=100G \
@@ -494,10 +558,11 @@ debian_vps() {
     success "Returned from Debian VPS."
 
     sleep 1
+
 }
 
 # ============================================================
-# DOWNLOAD + EXECUTE + DELETE
+# DOWNLOAD → EXECUTE → DELETE
 # ============================================================
 
 run_script() {
@@ -522,12 +587,13 @@ run_script() {
         error_msg "curl is required but was not found."
 
         return 1
+
     fi
 
     spinner "Downloading $script" 1
 
     # --------------------------------------------------------
-    # Download to temporary directory
+    # Download
     # --------------------------------------------------------
 
     if ! curl \
@@ -545,10 +611,11 @@ run_script() {
         rm -f "$temp_script"
 
         return 1
+
     fi
 
     # --------------------------------------------------------
-    # Make sure the downloaded file is not empty
+    # Validate
     # --------------------------------------------------------
 
     if [[ ! -s "$temp_script" ]]; then
@@ -558,6 +625,18 @@ run_script() {
         rm -f "$temp_script"
 
         return 1
+
+    fi
+
+    # --------------------------------------------------------
+    # Check that it looks like a Bash script
+    # --------------------------------------------------------
+
+    if ! head -n 1 "$temp_script" |
+        grep -qE '^#!.*bash|^#!.*env bash'; then
+
+        warning "$script does not have a standard Bash shebang."
+
     fi
 
     chmod +x "$temp_script"
@@ -567,7 +646,7 @@ run_script() {
     echo
 
     # --------------------------------------------------------
-    # Execute downloaded module
+    # Execute
     # --------------------------------------------------------
 
     info "Executing $script..."
@@ -581,27 +660,27 @@ run_script() {
     echo
 
     # --------------------------------------------------------
-    # DELETE SCRIPT AFTER EXECUTION
+    # Delete
     # --------------------------------------------------------
 
-    spinner "Removing temporary $script" 1
+    spinner "Deleting temporary $script" 1
 
     rm -f "$temp_script"
 
     if [[ -f "$temp_script" ]]; then
 
-        warning "Could not completely remove temporary $script."
+        warning "Could not remove temporary $script."
 
     else
 
-        success "$script deleted from temporary storage."
+        success "$script deleted."
 
     fi
 
     echo
 
     # --------------------------------------------------------
-    # Return original script exit code
+    # Return module exit code
     # --------------------------------------------------------
 
     if [[ "$exit_code" -ne 0 ]]; then
@@ -609,24 +688,13 @@ run_script() {
         error_msg "$script exited with code $exit_code."
 
         return "$exit_code"
+
     fi
 
     success "$script completed successfully."
 
     return 0
-}
 
-# ============================================================
-# REMOVE ALL TEMPORARY FILES
-# ============================================================
-
-cleanup_temp_scripts() {
-
-    if [[ -d "$TEMP_DIR" ]]; then
-
-        rm -rf "$TEMP_DIR"
-
-    fi
 }
 
 # ============================================================
@@ -690,6 +758,37 @@ service_status() {
     line
 
     pause
+
+}
+
+# ============================================================
+# REMOTE MODULE CHECK
+# ============================================================
+
+check_remote_module() {
+
+    local module="$1"
+
+    local url="${GITHUB_RAW}/${module}"
+
+    if curl \
+        --fail \
+        --silent \
+        --show-error \
+        --location \
+        --connect-timeout 5 \
+        --max-time 10 \
+        "$url" \
+        -o /dev/null 2>/dev/null; then
+
+        success "$module available."
+
+    else
+
+        error_msg "$module unavailable."
+
+    fi
+
 }
 
 # ============================================================
@@ -736,7 +835,9 @@ menu() {
 
         echo
 
-        read -r -p "$(echo -e "${CYAN}${BOLD}➜ Enter Option (0-9): ${RESET}")" choice
+        read -r -p \
+            "$(echo -e "${CYAN}${BOLD}➜ Enter Option (0-9): ${RESET}")" \
+            choice
 
         case "$choice" in
 
@@ -840,7 +941,9 @@ menu() {
 
                 echo
 
-                read -r -p "$(echo -e "${RED}${BOLD}Continue? [y/N]: ${RESET}")" confirm
+                read -r -p \
+                    "$(echo -e "${RED}${BOLD}Continue? [y/N]: ${RESET}")" \
+                    confirm
 
                 if [[ "$confirm" =~ ^[Yy]$ ]]; then
 
@@ -968,7 +1071,15 @@ menu() {
 
                 echo -e " ${GRAY}├─ Disk Usage   :${RESET} ${CYAN}$(get_disk_usage)${RESET}"
 
-                echo -e " ${GRAY}├─ Docker       :${RESET} $(command -v docker >/dev/null 2>&1 && echo -e "${GREEN}INSTALLED${RESET}" || echo -e "${RED}NOT INSTALLED${RESET}")"
+                if command -v docker >/dev/null 2>&1; then
+
+                    echo -e " ${GRAY}├─ Docker       :${RESET} ${GREEN}INSTALLED${RESET}"
+
+                else
+
+                    echo -e " ${GRAY}├─ Docker       :${RESET} ${RED}NOT INSTALLED${RESET}"
+
+                fi
 
                 echo -e " ${GRAY}├─ Network      :${RESET} $(get_network_status)"
 
@@ -980,35 +1091,14 @@ menu() {
 
                 echo
 
-                check_remote_module() {
-
-                    local module="$1"
-
-                    local url="${GITHUB_RAW}/${module}"
-
-                    if curl \
-                        --fail \
-                        --silent \
-                        --show-error \
-                        --location \
-                        --connect-timeout 5 \
-                        --max-time 10 \
-                        "$url" \
-                        -o /dev/null 2>/dev/null; then
-
-                        success "$module available."
-
-                    else
-
-                        error_msg "$module unavailable."
-
-                    fi
-                }
-
                 check_remote_module "panel.sh"
+
                 check_remote_module "wings.sh"
+
                 check_remote_module "change.sh"
+
                 check_remote_module "update.sh"
+
                 check_remote_module "remove.sh"
 
                 echo
@@ -1031,7 +1121,7 @@ menu() {
 
                 spinner "Shutting down SubhanPlays Installer" 2
 
-                cleanup_temp_scripts
+                cleanup
 
                 echo
 
@@ -1064,6 +1154,7 @@ menu() {
         esac
 
     done
+
 }
 
 # ============================================================
@@ -1084,7 +1175,9 @@ startup() {
 
     echo -e "${CYAN}${BOLD}"
 
-    type_text "Initializing SubhanPlays Pterodactyl Installer..." 0.018
+    type_text \
+        "Initializing SubhanPlays Pterodactyl Installer..." \
+        0.018
 
     echo -e "${RESET}"
 
@@ -1103,6 +1196,7 @@ startup() {
     show_cursor
 
     sleep 0.5
+
 }
 
 # ============================================================
