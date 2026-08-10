@@ -22,31 +22,21 @@ readonly ICON_ERROR="✖"
 readonly ICON_WARNING="⚠"
 readonly ICON_INFO="ℹ"
 
-# Determine script directory
-if [[ -L "$0" ]] || [[ -f "$0" ]]; then
-    SCRIPT_DIR="$(cd -- "$(dirname -- "$0")" && pwd)"
-else
-    # Running from curl pipe, download to temp directory
-    SCRIPT_DIR="/tmp/subhanplays-pterodactyl-scripts"
-    mkdir -p "$SCRIPT_DIR"
-fi
-
-readonly SCRIPT_DIR
-readonly TMP_DIR="/tmp/subhanplays-pterodactyl"
+# GitHub raw URLs
 readonly GITHUB_BASE="https://raw.githubusercontent.com/Subhanplays/csb-installer/main"
+readonly TMP_DIR="/tmp/subhanplays-pterodactyl"
 
 # Cleanup function
 cleanup() {
     local exit_code=$?
-    # Only cleanup temp download directory if we created it
-    if [[ "$SCRIPT_DIR" == "/tmp/subhanplays-pterodactyl-scripts" ]]; then
-        rm -rf "$SCRIPT_DIR"
-    fi
+    echo -e "${BLUE}[${ICON_INFO}] Cleaning up temporary files...${NC}"
     if [[ -d "$TMP_DIR" ]]; then
         rm -rf "$TMP_DIR"
+        echo -e "${GREEN}[${ICON_SUCCESS}] Removed temporary directory${NC}"
     fi
     if [[ -f "/tmp/subhanplays-installer.lock" ]]; then
         rm -f "/tmp/subhanplays-installer.lock"
+        echo -e "${GREEN}[${ICON_SUCCESS}] Removed lock file${NC}"
     fi
     exit $exit_code
 }
@@ -61,33 +51,7 @@ check_root() {
         echo -e "${YELLOW}[${ICON_INFO}] Please run: sudo bash $0${NC}" >&2
         exit 1
     fi
-}
-
-# Download script if missing
-download_script() {
-    local script_name=$1
-    
-    # First check in current directory
-    if [[ -f "$SCRIPT_DIR/$script_name" ]]; then
-        return 0
-    fi
-    
-    # Try to download from GitHub
-    echo -e "${YELLOW}[${ICON_WARNING}] $script_name not found locally${NC}"
-    echo -e "${BLUE}[${ICON_INFO}] Downloading from GitHub...${NC}"
-    
-    mkdir -p "$SCRIPT_DIR"
-    
-    if curl -fsSL "${GITHUB_BASE}/${script_name}" -o "$SCRIPT_DIR/$script_name" 2>/dev/null; then
-        chmod +x "$SCRIPT_DIR/$script_name"
-        echo -e "${GREEN}[${ICON_SUCCESS}] Downloaded $script_name${NC}"
-        return 0
-    else
-        echo -e "${RED}[${ICON_ERROR}] Failed to download $script_name${NC}"
-        echo -e "${YELLOW}[${ICON_INFO}] Please download all scripts from:${NC}"
-        echo -e "${WHITE}${GITHUB_BASE}${NC}"
-        return 1
-    fi
+    echo -e "${GREEN}[${ICON_SUCCESS}] Running as root${NC}"
 }
 
 # Display ASCII header
@@ -126,31 +90,113 @@ display_menu() {
     echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 }
 
-# Execute script with proper path
-run_script() {
+# Execute script directly from GitHub
+run_script_from_github() {
     local script_name=$1
+    local script_url="${GITHUB_BASE}/${script_name}"
     
-    if ! download_script "$script_name"; then
-        return 1
+    echo -e "${BLUE}[${ICON_INFO}] Fetching and executing ${script_name}...${NC}"
+    echo -e "${WHITE}Source: ${script_url}${NC}"
+    echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    
+    # Execute directly from GitHub
+    bash <(curl -fsSL "$script_url")
+    local exit_code=$?
+    
+    echo ""
+    echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    
+    if [[ $exit_code -eq 0 ]]; then
+        echo -e "${GREEN}[${ICON_SUCCESS}] ${script_name} completed successfully${NC}"
+    else
+        echo -e "${YELLOW}[${ICON_WARNING}] ${script_name} completed with exit code ${exit_code}${NC}"
     fi
     
-    bash "$SCRIPT_DIR/$script_name"
-    return $?
+    return $exit_code
+}
+
+# Check system requirements
+check_requirements() {
+    echo -e "${BLUE}[${ICON_INFO}] Checking system requirements...${NC}"
+    
+    # Check for curl
+    if ! command -v curl &> /dev/null; then
+        echo -e "${YELLOW}[${ICON_WARNING}] curl is required. Installing...${NC}"
+        apt-get update -y > /dev/null 2>&1
+        apt-get install -y curl > /dev/null 2>&1
+        echo -e "${GREEN}[${ICON_SUCCESS}] curl installed${NC}"
+    else
+        echo -e "${GREEN}[${ICON_SUCCESS}] curl is available${NC}"
+    fi
+    
+    # Check for bash
+    if ! command -v bash &> /dev/null; then
+        echo -e "${RED}[${ICON_ERROR}] bash is required${NC}"
+        exit 1
+    fi
+    
+    echo -e "${GREEN}[${ICON_SUCCESS}] All requirements satisfied${NC}"
+    echo ""
+}
+
+# Full installation workflow
+full_installation() {
+    echo -e "${BLUE}[${ICON_INFO}] Starting full installation...${NC}"
+    echo ""
+    
+    # Ask for VPS creation
+    echo -e "${YELLOW}[${ICON_WARNING}] VPS creation requires Docker and will run interactively${NC}"
+    read -p "Create Debian VPS? (y/n): " create_vps
+    if [[ "$create_vps" =~ ^[Yy]$ ]]; then
+        run_script_from_github "vps.sh"
+        echo ""
+    fi
+    
+    # Install Panel
+    echo -e "${BLUE}[${ICON_INFO}] Installing Pterodactyl Panel...${NC}"
+    run_script_from_github "panel.sh"
+    echo ""
+    
+    # Install Wings
+    echo -e "${BLUE}[${ICON_INFO}] Installing Pterodactyl Wings...${NC}"
+    run_script_from_github "wings.sh"
+    echo ""
+    
+    echo -e "${GREEN}${BOLD}[${ICON_SUCCESS}] Full installation completed!${NC}"
 }
 
 # Main loop
 main() {
+    # Check root first
     check_root
+    
+    # Check requirements
+    check_requirements
     
     # Create lock file
     if [[ -f "/tmp/subhanplays-installer.lock" ]]; then
         local pid=$(cat /tmp/subhanplays-installer.lock)
         if ps -p "$pid" > /dev/null 2>&1; then
             echo -e "${RED}[${ICON_ERROR}] Another instance is already running (PID: $pid)${NC}"
+            echo -e "${YELLOW}[${ICON_INFO}] Wait for it to finish or remove /tmp/subhanplays-installer.lock${NC}"
             exit 1
         fi
     fi
     echo $$ > /tmp/subhanplays-installer.lock
+    
+    # Verify GitHub connectivity
+    echo -e "${BLUE}[${ICON_INFO}] Checking GitHub connectivity...${NC}"
+    if curl -fsSL "${GITHUB_BASE}/install.sh" > /dev/null 2>&1; then
+        echo -e "${GREEN}[${ICON_SUCCESS}] Connected to GitHub repository${NC}"
+    else
+        echo -e "${RED}[${ICON_ERROR}] Cannot connect to GitHub repository${NC}"
+        echo -e "${YELLOW}[${ICON_INFO}] Please check your internet connection${NC}"
+        echo -e "${YELLOW}[${ICON_INFO}] URL: ${GITHUB_BASE}${NC}"
+        exit 1
+    fi
+    
+    echo ""
     
     while true; do
         display_menu
@@ -160,49 +206,48 @@ main() {
         
         case $choice in
             1)
-                echo -e "${BLUE}[${ICON_INFO}] Launching VPS creation...${NC}"
-                run_script "vps.sh"
+                run_script_from_github "vps.sh"
+                echo ""
                 read -p "Press Enter to continue..."
                 ;;
             2)
-                echo -e "${BLUE}[${ICON_INFO}] Installing Pterodactyl Panel...${NC}"
-                run_script "panel.sh"
+                run_script_from_github "panel.sh"
+                echo ""
                 read -p "Press Enter to continue..."
                 ;;
             3)
-                echo -e "${BLUE}[${ICON_INFO}] Installing Pterodactyl Wings...${NC}"
-                run_script "wings.sh"
+                run_script_from_github "wings.sh"
+                echo ""
                 read -p "Press Enter to continue..."
                 ;;
             4)
-                echo -e "${BLUE}[${ICON_INFO}] Opening configuration menu...${NC}"
-                run_script "change.sh"
+                run_script_from_github "change.sh"
+                echo ""
+                read -p "Press Enter to continue..."
                 ;;
             5)
-                echo -e "${BLUE}[${ICON_INFO}] Opening update menu...${NC}"
-                run_script "update.sh"
+                run_script_from_github "update.sh"
+                echo ""
                 read -p "Press Enter to continue..."
                 ;;
             6)
-                echo -e "${BLUE}[${ICON_INFO}] Opening removal menu...${NC}"
-                run_script "remove.sh"
+                run_script_from_github "remove.sh"
+                echo ""
                 read -p "Press Enter to continue..."
                 ;;
             7)
-                echo -e "${BLUE}[${ICON_INFO}] Starting full installation...${NC}"
-                echo -e "${YELLOW}[${ICON_WARNING}] VPS creation requires Docker and will run interactively${NC}"
-                read -p "Create VPS first? (y/n): " create_vps
-                if [[ "$create_vps" =~ ^[Yy]$ ]]; then
-                    run_script "vps.sh"
-                fi
-                run_script "panel.sh"
-                run_script "wings.sh"
+                full_installation
+                echo ""
                 read -p "Press Enter to continue..."
                 ;;
             8)
                 echo ""
-                echo -e "${GREEN}${BOLD}Thank you for using SubhanPlays Pterodactyl Installer!${NC}"
-                echo -e "${CYAN}Goodbye!${NC}"
+                echo -e "${GREEN}${BOLD}╔══════════════════════════════════════════════════════════╗${NC}"
+                echo -e "${GREEN}${BOLD}║  Thank you for using SubhanPlays Pterodactyl Installer! ║${NC}"
+                echo -e "${GREEN}${BOLD}╚══════════════════════════════════════════════════════════╝${NC}"
+                echo ""
+                echo -e "${CYAN}Goodbye! 👋${NC}"
+                echo ""
                 exit 0
                 ;;
             *)
