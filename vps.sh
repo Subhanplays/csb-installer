@@ -3,54 +3,94 @@
 # SubhanPlays Pterodactyl Installer - VPS Creation
 # Version: 1.0.0
 
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/lib/common.sh"
+set -euo pipefail
+
+readonly RED='\033[0;31m'
+readonly GREEN='\033[0;32m'
+readonly YELLOW='\033[1;33m'
+readonly BLUE='\033[0;34m'
+readonly CYAN='\033[0;36m'
+readonly WHITE='\033[1;37m'
+readonly NC='\033[0m'
+readonly BOLD='\033[1m'
+
+readonly ICON_SUCCESS="✓"
+readonly ICON_ERROR="✖"
+readonly ICON_WARNING="⚠"
+readonly ICON_INFO="ℹ"
+
+check_root() {
+    if [[ $EUID -ne 0 ]]; then
+        echo -e "${RED}[${ICON_ERROR}] This script must be run as root${NC}"
+        exit 1
+    fi
+}
+
+spinner() {
+    local pid=$1
+    local delay=0.1
+    local spinstr='|/-\'
+    while ps -p $pid > /dev/null 2>&1; do
+        local temp=${spinstr#?}
+        printf " [%c]  " "$spinstr"
+        local spinstr=$temp${spinstr%"$temp"}
+        sleep $delay
+        printf "\b\b\b\b\b\b"
+    done
+    printf "    \b\b\b\b"
+    wait $pid
+}
 
 create_vps() {
     clear
-    header "CREATE DEBIAN VPS"
+    echo -e "${CYAN}${BOLD}CREATE DEBIAN VPS${NC}"
     echo ""
     
     check_root
     
     # Check Docker
-    if ! check_docker; then
-        warning "Docker is required for VPS creation"
-        echo -n "Would you like to install Docker? (y/n): "
-        read -r install_docker
+    if ! command -v docker &> /dev/null; then
+        echo -e "${YELLOW}[${ICON_WARNING}] Docker is required for VPS creation${NC}"
+        read -p "Would you like to install Docker? (y/n): " install_docker
         if [[ "$install_docker" =~ ^[Yy]$ ]]; then
-            info "Installing Docker..."
+            echo -e "${BLUE}[${ICON_INFO}] Installing Docker...${NC}"
             curl -fsSL https://get.docker.com | sh > /dev/null 2>&1 &
             spinner $!
-            
-            if ! check_docker; then
-                error_exit "Docker installation failed" \
-                    "Please install Docker manually"
-            fi
         else
-            error_exit "Docker is required for VPS creation" \
-                "Install Docker and try again"
+            echo -e "${RED}[${ICON_ERROR}] Docker is required for VPS creation${NC}"
+            exit 1
         fi
     fi
+    
+    if ! docker info > /dev/null 2>&1; then
+        echo -e "${RED}[${ICON_ERROR}] Docker daemon is not running${NC}"
+        systemctl start docker > /dev/null 2>&1
+        sleep 2
+        if ! docker info > /dev/null 2>&1; then
+            echo -e "${RED}[${ICON_ERROR}] Cannot start Docker daemon${NC}"
+            exit 1
+        fi
+    fi
+    
+    echo -e "${GREEN}[${ICON_SUCCESS}] Docker is running${NC}"
     
     # Create vmdata directory
     local VMDATA_DIR="$PWD/vmdata"
     if [[ ! -d "$VMDATA_DIR" ]]; then
-        info "Creating VM data directory: $VMDATA_DIR"
+        echo -e "${BLUE}[${ICON_INFO}] Creating VM data directory: $VMDATA_DIR${NC}"
         mkdir -p "$VMDATA_DIR"
-        success "VM data directory created"
     fi
     
     # Display VPS configuration
     echo ""
-    header "VPS CONFIGURATION"
+    echo -e "${CYAN}${BOLD}VPS CONFIGURATION${NC}"
     echo -e "${CYAN}RAM:${NC} ${WHITE}7900MB${NC}"
     echo -e "${CYAN}CPU:${NC} ${WHITE}3 cores${NC}"
     echo -e "${CYAN}Disk:${NC} ${WHITE}100GB${NC}"
     echo -e "${CYAN}Data Directory:${NC} ${WHITE}$VMDATA_DIR${NC}"
     echo ""
     
-    warning "This will create a Docker container with Debian"
+    echo -e "${YELLOW}[${ICON_WARNING}] This will create a Docker container with Debian${NC}"
     echo -e "${WHITE}Press CTRL+C to stop the container at any time${NC}"
     echo -e "${WHITE}The container will run interactively${NC}"
     echo ""
@@ -58,7 +98,7 @@ create_vps() {
     read -p "Press Enter to start the VPS..."
     
     # Run the container
-    info "Starting Debian VPS container..."
+    echo -e "${BLUE}[${ICON_INFO}] Starting Debian VPS container...${NC}"
     
     docker run -it --rm \
         -v "$VMDATA_DIR:/vmdata" \
@@ -67,15 +107,8 @@ create_vps() {
         -e DISK_SIZE=100G \
         nothingtheking/debian-vm
     
-    local exit_code=$?
-    
-    if [[ $exit_code -eq 0 ]] || [[ $exit_code -eq 130 ]]; then
-        success "VPS container stopped"
-        info "VM data is preserved in: $VMDATA_DIR"
-    else
-        error "VPS container exited with code: $exit_code"
-    fi
+    echo -e "${GREEN}[${ICON_SUCCESS}] VPS container stopped${NC}"
+    echo -e "${BLUE}[${ICON_INFO}] VM data is preserved in: $VMDATA_DIR${NC}"
 }
 
-# Run VPS creation
 create_vps
