@@ -10,6 +10,18 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 VM_DIR="$SCRIPT_DIR/vmdata"
 
 # ============================================================
+# GITHUB RAW SOURCE
+# ============================================================
+
+GITHUB_RAW="https://raw.githubusercontent.com/Subhanplays/csb-installer/main"
+
+# ============================================================
+# TEMPORARY INSTALLER DIRECTORY
+# ============================================================
+
+TEMP_DIR="$(mktemp -d /tmp/subhanplays-installer.XXXXXX)"
+
+# ============================================================
 # COLORS
 # ============================================================
 
@@ -40,6 +52,10 @@ show_cursor() {
 
 cleanup() {
     show_cursor
+
+    if [[ -d "$TEMP_DIR" ]]; then
+        rm -rf "$TEMP_DIR"
+    fi
 }
 
 trap cleanup EXIT
@@ -60,40 +76,67 @@ pause() {
 # ============================================================
 
 get_cpu_usage() {
+
     if command -v top >/dev/null 2>&1; then
+
         top -bn1 2>/dev/null |
-            awk -F'id,' '/Cpu\(s\)/ {split($1,a,","); sub(/.* /,"",a[length(a)]); print int(100-a[length(a)])"%"; exit}'
+            awk -F'id,' '/Cpu\(s\)/ {
+                split($1,a,",")
+                sub(/.* /,"",a[length(a)])
+                print int(100-a[length(a)])"%"
+                exit
+            }'
+
     else
         echo "N/A"
     fi
 }
 
 get_ram_usage() {
+
     if command -v free >/dev/null 2>&1; then
-        free | awk '/Mem:/ {printf "%d%%", ($3/$2)*100}'
+
+        free | awk '/Mem:/ {
+            printf "%d%%", ($3/$2)*100
+        }'
+
     else
         echo "N/A"
     fi
 }
 
 get_disk_usage() {
-    df -h / 2>/dev/null | awk 'NR==2 {print $5}'
+
+    df -h / 2>/dev/null |
+        awk 'NR==2 {print $5}'
 }
 
 get_hostname() {
+
     hostname 2>/dev/null || echo "unknown"
 }
 
 get_uptime() {
-    uptime -p 2>/dev/null | sed 's/^up //' || echo "unknown"
+
+    uptime -p 2>/dev/null |
+        sed 's/^up //' ||
+        echo "unknown"
 }
 
 get_network_status() {
+
     if command -v curl >/dev/null 2>&1 &&
-       curl -fsS --connect-timeout 2 https://1.1.1.1 >/dev/null 2>&1; then
+        curl -fsS \
+        --connect-timeout 2 \
+        --max-time 4 \
+        https://1.1.1.1 >/dev/null 2>&1; then
+
         echo -e "${GREEN}● CONNECTED${RESET}"
+
     else
+
         echo -e "${RED}● OFFLINE${RESET}"
+
     fi
 }
 
@@ -102,27 +145,33 @@ get_network_status() {
 # ============================================================
 
 line() {
+
     echo -e "${GRAY}──────────────────────────────────────────────────────────────────────────────${RESET}"
 }
 
 section() {
+
     echo
     echo -e "${WHITE}${BOLD} ◉ $1${RESET}"
 }
 
 success() {
+
     echo -e " ${GREEN}✓${RESET} $1"
 }
 
 error_msg() {
+
     echo -e " ${RED}✖${RESET} $1"
 }
 
 warning() {
+
     echo -e " ${YELLOW}⚠${RESET} $1"
 }
 
 info() {
+
     echo -e " ${CYAN}➜${RESET} $1"
 }
 
@@ -131,15 +180,21 @@ info() {
 # ============================================================
 
 type_text() {
+
     local text="$1"
     local delay="${2:-0.015}"
+
     local i
     local char
 
     for ((i=0; i<${#text}; i++)); do
+
         char="${text:i:1}"
+
         printf '%s' "$char"
+
         sleep "$delay"
+
     done
 
     echo
@@ -150,6 +205,7 @@ type_text() {
 # ============================================================
 
 spinner() {
+
     local message="$1"
     local duration="${2:-2}"
 
@@ -172,9 +228,13 @@ spinner() {
     hide_cursor
 
     while (( SECONDS < end )); do
+
         printf "\r${CYAN}${frames[i % ${#frames[@]}]}${RESET} ${message}   "
+
         i=$((i + 1))
+
         sleep 0.08
+
     done
 
     printf "\r\033[K"
@@ -187,8 +247,10 @@ spinner() {
 # ============================================================
 
 progress_bar() {
+
     local message="$1"
     local width=34
+
     local i
     local filled
     local empty
@@ -199,6 +261,7 @@ progress_bar() {
     for ((i=0; i<=width; i++)); do
 
         filled=$(printf '%*s' "$i" '' | tr ' ' '█')
+
         empty=$(printf '%*s' "$((width-i))" '' | tr ' ' '░')
 
         percent=$((i * 100 / width))
@@ -206,6 +269,7 @@ progress_bar() {
         printf "\r ${CYAN}${message}${RESET} [${GREEN}${filled}${GRAY}${empty}${RESET}] ${WHITE}%3d%%${RESET}" "$percent"
 
         sleep 0.025
+
     done
 
     printf "\n"
@@ -222,13 +286,13 @@ logo() {
     echo -e "${CYAN}${BOLD}"
 
     cat <<'EOF'
-
-███████╗██╗   ██╗██████╗ ██╗  ██╗ █████╗ ███╗   ██╗
-██╔════╝██║   ██║██╔══██╗██║  ██║██╔══██╗████╗  ██║
-███████╗██║   ██║██████╔╝███████║███████║██╔██╗ ██║
-╚════██║██║   ██║██╔═══╝ ██╔══██║██╔══██║██║╚██╗██║
-███████║╚██████╔╝██║     ██║  ██║██║  ██║██║ ╚████║
-╚══════╝ ╚═════╝ ╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝
+ ░██████              ░██        ░██
+ ░██   ░██             ░██        ░██
+░██         ░██    ░██ ░████████  ░████████   ░██████   ░████████
+ ░████████  ░██    ░██ ░██    ░██ ░██    ░██       ░██  ░██    ░██
+        ░██ ░██    ░██ ░██    ░██ ░██    ░██  ░███████  ░██    ░██
+ ░██   ░██  ░██   ░███ ░███   ░██ ░██    ░██ ░██   ░██  ░██    ░██
+  ░██████    ░█████░██ ░██░█████  ░██    ░██  ░█████░██ ░██    ░██
 
 EOF
 
@@ -242,10 +306,12 @@ EOF
 header() {
 
     echo -e "${WHITE}${BOLD}"
+
     echo "╔══════════════════════════════════════════════════════════════════════════════╗"
-    echo "║              SUBHANPLAYS — PTERODACTYL INSTALLER                         ║"
-    echo "║              OBSIDIAN TERMINAL EDITION • v1.0                            ║"
+    echo "║              SUBHANPLAYS — PTERODACTYL INSTALLER                           ║"
+    echo "║              OBSIDIAN TERMINAL EDITION • v1.0                              ║"
     echo "╚══════════════════════════════════════════════════════════════════════════════╝"
+
     echo -e "${RESET}"
 
     echo
@@ -253,9 +319,11 @@ header() {
     echo
 
     echo -e "${GRAY}◉ INSTALLER INFORMATION${RESET}"
+
     echo -e "${GRAY}├─ Hostname          :${RESET} ${WHITE}$(get_hostname)${RESET}"
     echo -e "${GRAY}├─ Uptime            :${RESET} ${WHITE}$(get_uptime)${RESET}"
     echo -e "${GRAY}├─ Installer         :${RESET} ${CYAN}SubhanPlays Pterodactyl${RESET}"
+    echo -e "${GRAY}├─ Source            :${RESET} ${CYAN}${GITHUB_RAW}${RESET}"
     echo -e "${GRAY}└─ Working Directory :${RESET} ${WHITE}$SCRIPT_DIR${RESET}"
 
     line
@@ -280,7 +348,9 @@ system_status() {
     section "SYSTEM STATUS"
 
     echo
+
     echo -e "   ${WHITE}CPU Usage:${RESET}   ${CYAN}${cpu}${RESET}      ${WHITE}RAM Usage:${RESET}   ${CYAN}${ram}${RESET}"
+
     echo -e "   ${WHITE}Disk Usage:${RESET}  ${CYAN}${disk}${RESET}      ${WHITE}Network:${RESET}    ${network}"
 
     echo
@@ -302,7 +372,8 @@ need_root() {
 
         spinner "Requesting root access" 2
 
-        exec sudo su -c "bash '$SCRIPT_DIR/install.sh' $*"
+        exec sudo -E bash "$SCRIPT_DIR/install.sh" "$@"
+
     fi
 }
 
@@ -313,8 +384,11 @@ need_root() {
 install_docker() {
 
     if command -v docker >/dev/null 2>&1; then
+
         success "Docker is already installed."
+
         return
+
     fi
 
     info "Docker was not detected."
@@ -329,7 +403,7 @@ install_docker() {
 
     spinner "Downloading Docker installer" 2
 
-    curl -fsSL https://get.docker.com/ |
+    curl -fsSL https://get.docker.com |
         CHANNEL=stable bash >/dev/null 2>&1
 
     systemctl enable --now docker 2>/dev/null || true
@@ -344,12 +418,15 @@ install_docker() {
 debian_vps() {
 
     clear_screen
+
     logo
+
     header
 
     section "DEPLOYMENT CONFIGURATION"
 
     echo
+
     echo -e " ${GRAY}├─ RAM        :${RESET} ${WHITE}7900 MB${RESET}"
     echo -e " ${GRAY}├─ CPU        :${RESET} ${WHITE}3 Cores${RESET}"
     echo -e " ${GRAY}├─ Disk       :${RESET} ${WHITE}100G${RESET}"
@@ -366,6 +443,7 @@ debian_vps() {
         error_msg "Debian VPS setup was declined."
 
         echo
+
         warning "Continuing on the current system."
 
         sleep 1
@@ -384,10 +462,13 @@ debian_vps() {
     spinner "Connecting to Debian VM" 2
 
     echo
+
     line
 
     echo -e "${GREEN}${BOLD}"
+
     echo " ◉ DEBIAN VPS UPLINK"
+
     echo -e "${RESET}"
 
     echo -e " ${GRAY}├─ RAM        :${RESET} ${WHITE}7900 MB${RESET}"
@@ -416,7 +497,7 @@ debian_vps() {
 }
 
 # ============================================================
-# SCRIPT LAUNCHER
+# DOWNLOAD + EXECUTE + DELETE
 # ============================================================
 
 run_script() {
@@ -425,27 +506,127 @@ run_script() {
 
     shift || true
 
-    if [[ ! -f "$SCRIPT_DIR/$script" ]]; then
+    local url="${GITHUB_RAW}/${script}"
+    local temp_script="${TEMP_DIR}/${script}"
 
-        error_msg "Missing script: $script"
+    echo
 
-        echo
-        echo -e "${GRAY}Expected:${RESET} $SCRIPT_DIR/$script"
+    info "Remote module: $script"
 
-        pause
+    echo -e " ${GRAY}Source:${RESET} ${CYAN}${url}${RESET}"
+
+    echo
+
+    if ! command -v curl >/dev/null 2>&1; then
+
+        error_msg "curl is required but was not found."
 
         return 1
     fi
 
-    chmod +x "$SCRIPT_DIR/$script" 2>/dev/null || true
+    spinner "Downloading $script" 1
+
+    # --------------------------------------------------------
+    # Download to temporary directory
+    # --------------------------------------------------------
+
+    if ! curl \
+        --fail \
+        --silent \
+        --show-error \
+        --location \
+        --connect-timeout 10 \
+        --max-time 300 \
+        "$url" \
+        -o "$temp_script"; then
+
+        error_msg "Failed to download $script."
+
+        rm -f "$temp_script"
+
+        return 1
+    fi
+
+    # --------------------------------------------------------
+    # Make sure the downloaded file is not empty
+    # --------------------------------------------------------
+
+    if [[ ! -s "$temp_script" ]]; then
+
+        error_msg "$script downloaded as an empty file."
+
+        rm -f "$temp_script"
+
+        return 1
+    fi
+
+    chmod +x "$temp_script"
+
+    success "$script downloaded."
 
     echo
 
-    spinner "Connecting to $script" 2
+    # --------------------------------------------------------
+    # Execute downloaded module
+    # --------------------------------------------------------
+
+    info "Executing $script..."
 
     echo
 
-    bash "$SCRIPT_DIR/$script" "$@"
+    local exit_code=0
+
+    bash "$temp_script" "$@" || exit_code=$?
+
+    echo
+
+    # --------------------------------------------------------
+    # DELETE SCRIPT AFTER EXECUTION
+    # --------------------------------------------------------
+
+    spinner "Removing temporary $script" 1
+
+    rm -f "$temp_script"
+
+    if [[ -f "$temp_script" ]]; then
+
+        warning "Could not completely remove temporary $script."
+
+    else
+
+        success "$script deleted from temporary storage."
+
+    fi
+
+    echo
+
+    # --------------------------------------------------------
+    # Return original script exit code
+    # --------------------------------------------------------
+
+    if [[ "$exit_code" -ne 0 ]]; then
+
+        error_msg "$script exited with code $exit_code."
+
+        return "$exit_code"
+    fi
+
+    success "$script completed successfully."
+
+    return 0
+}
+
+# ============================================================
+# REMOVE ALL TEMPORARY FILES
+# ============================================================
+
+cleanup_temp_scripts() {
+
+    if [[ -d "$TEMP_DIR" ]]; then
+
+        rm -rf "$TEMP_DIR"
+
+    fi
 }
 
 # ============================================================
@@ -455,7 +636,9 @@ run_script() {
 service_status() {
 
     clear_screen
+
     logo
+
     header
 
     section "SERVICE STATUS"
@@ -465,9 +648,13 @@ service_status() {
     echo -e "${WHITE} NGINX${RESET}"
 
     if systemctl is-active --quiet nginx 2>/dev/null; then
+
         echo -e " └─ Status: ${GREEN}● ACTIVE${RESET}"
+
     else
+
         echo -e " └─ Status: ${RED}● INACTIVE${RESET}"
+
     fi
 
     echo
@@ -475,9 +662,13 @@ service_status() {
     echo -e "${WHITE} PTERODACTYL QUEUE${RESET}"
 
     if systemctl is-active --quiet pteroq 2>/dev/null; then
+
         echo -e " └─ Status: ${GREEN}● ACTIVE${RESET}"
+
     else
+
         echo -e " └─ Status: ${RED}● INACTIVE${RESET}"
+
     fi
 
     echo
@@ -485,9 +676,13 @@ service_status() {
     echo -e "${WHITE} WINGS${RESET}"
 
     if systemctl is-active --quiet wings 2>/dev/null; then
+
         echo -e " └─ Status: ${GREEN}● ACTIVE${RESET}"
+
     else
+
         echo -e " └─ Status: ${RED}● INACTIVE${RESET}"
+
     fi
 
     echo
@@ -508,15 +703,21 @@ menu() {
         clear_screen
 
         logo
+
         header
+
         system_status
 
         section "DEPLOYMENT & SERVICES"
 
         echo
+
         echo -e " ${GRAY}├─${RESET} ${CYAN}[1]${RESET} ${GREEN}Pterodactyl Panel${RESET}       ${GRAY}├─${RESET} ${CYAN}[5]${RESET} ${MAGENTA}Panel Settings${RESET}"
+
         echo -e " ${GRAY}├─${RESET} ${CYAN}[2]${RESET} ${BLUE}Wings${RESET}                   ${GRAY}├─${RESET} ${CYAN}[6]${RESET} ${CYAN}System Status${RESET}"
+
         echo -e " ${GRAY}├─${RESET} ${CYAN}[3]${RESET} ${YELLOW}Update Panel + Wings${RESET}    ${GRAY}├─${RESET} ${CYAN}[7]${RESET} ${WHITE}Restart Services${RESET}"
+
         echo -e " ${GRAY}└─${RESET} ${CYAN}[4]${RESET} ${RED}Remove Panel / Wings${RESET}    ${GRAY}└─${RESET} ${CYAN}[8]${RESET} ${WHITE}Debian VPS${RESET}"
 
         echo
@@ -524,7 +725,9 @@ menu() {
         section "MAINTENANCE & TOOLS"
 
         echo
+
         echo -e " ${GRAY}├─${RESET} ${CYAN}[9]${RESET} ${WHITE}Installer Diagnostics${RESET}"
+
         echo -e " ${GRAY}└─${RESET} ${RED}[0]${RESET} ${BOLD}SHUTDOWN INSTALLER${RESET}"
 
         echo
@@ -532,18 +735,27 @@ menu() {
         line
 
         echo
+
         read -r -p "$(echo -e "${CYAN}${BOLD}➜ Enter Option (0-9): ${RESET}")" choice
 
         case "$choice" in
 
+            # ==================================================
+            # PANEL
+            # ==================================================
+
             1)
 
                 clear_screen
+
                 logo
+
                 header
 
                 echo
+
                 echo -e "${GREEN}${BOLD}◉ PTERODACTYL PANEL DEPLOYMENT${RESET}"
+
                 echo
 
                 progress_bar "Initializing Panel installer"
@@ -554,14 +766,22 @@ menu() {
 
                 ;;
 
+            # ==================================================
+            # WINGS
+            # ==================================================
+
             2)
 
                 clear_screen
+
                 logo
+
                 header
 
                 echo
+
                 echo -e "${BLUE}${BOLD}◉ WINGS DEPLOYMENT${RESET}"
+
                 echo
 
                 progress_bar "Initializing Wings installer"
@@ -572,14 +792,22 @@ menu() {
 
                 ;;
 
+            # ==================================================
+            # UPDATE
+            # ==================================================
+
             3)
 
                 clear_screen
+
                 logo
+
                 header
 
                 echo
+
                 echo -e "${YELLOW}${BOLD}◉ PANEL + WINGS UPDATE${RESET}"
+
                 echo
 
                 progress_bar "Initializing update process"
@@ -590,14 +818,22 @@ menu() {
 
                 ;;
 
+            # ==================================================
+            # REMOVE
+            # ==================================================
+
             4)
 
                 clear_screen
+
                 logo
+
                 header
 
                 echo
+
                 echo -e "${RED}${BOLD}◉ PTERODACTYL REMOVAL${RESET}"
+
                 echo
 
                 warning "This operation may remove installed Pterodactyl components."
@@ -622,14 +858,22 @@ menu() {
 
                 ;;
 
+            # ==================================================
+            # SETTINGS
+            # ==================================================
+
             5)
 
                 clear_screen
+
                 logo
+
                 header
 
                 echo
+
                 echo -e "${MAGENTA}${BOLD}◉ PANEL SETTINGS${RESET}"
+
                 echo
 
                 progress_bar "Initializing settings manager"
@@ -640,16 +884,26 @@ menu() {
 
                 ;;
 
+            # ==================================================
+            # STATUS
+            # ==================================================
+
             6)
 
                 service_status
 
                 ;;
 
+            # ==================================================
+            # RESTART
+            # ==================================================
+
             7)
 
                 clear_screen
+
                 logo
+
                 header
 
                 section "SERVICE RESTART"
@@ -657,12 +911,15 @@ menu() {
                 echo
 
                 spinner "Restarting Nginx" 1
+
                 systemctl restart nginx 2>/dev/null || true
 
                 spinner "Restarting Pterodactyl Queue" 1
+
                 systemctl restart pteroq 2>/dev/null || true
 
                 spinner "Restarting Wings" 1
+
                 systemctl restart wings 2>/dev/null || true
 
                 echo
@@ -673,6 +930,10 @@ menu() {
 
                 ;;
 
+            # ==================================================
+            # DEBIAN VPS
+            # ==================================================
+
             8)
 
                 debian_vps
@@ -681,10 +942,16 @@ menu() {
 
                 ;;
 
+            # ==================================================
+            # DIAGNOSTICS
+            # ==================================================
+
             9)
 
                 clear_screen
+
                 logo
+
                 header
 
                 section "INSTALLER DIAGNOSTICS"
@@ -692,44 +959,57 @@ menu() {
                 echo
 
                 echo -e " ${GRAY}├─ Bash Version :${RESET} ${WHITE}${BASH_VERSION}${RESET}"
+
                 echo -e " ${GRAY}├─ Hostname     :${RESET} ${WHITE}$(get_hostname)${RESET}"
+
                 echo -e " ${GRAY}├─ CPU Usage    :${RESET} ${CYAN}$(get_cpu_usage)${RESET}"
+
                 echo -e " ${GRAY}├─ RAM Usage    :${RESET} ${CYAN}$(get_ram_usage)${RESET}"
+
                 echo -e " ${GRAY}├─ Disk Usage   :${RESET} ${CYAN}$(get_disk_usage)${RESET}"
+
                 echo -e " ${GRAY}├─ Docker       :${RESET} $(command -v docker >/dev/null 2>&1 && echo -e "${GREEN}INSTALLED${RESET}" || echo -e "${RED}NOT INSTALLED${RESET}")"
-                echo -e " ${GRAY}└─ Network      :${RESET} $(get_network_status)"
+
+                echo -e " ${GRAY}├─ Network      :${RESET} $(get_network_status)"
+
+                echo -e " ${GRAY}└─ GitHub       :${RESET} ${CYAN}${GITHUB_RAW}${RESET}"
 
                 echo
 
-                if [[ -f "$SCRIPT_DIR/panel.sh" ]]; then
-                    success "panel.sh detected."
-                else
-                    error_msg "panel.sh missing."
-                fi
+                section "REMOTE MODULES"
 
-                if [[ -f "$SCRIPT_DIR/wings.sh" ]]; then
-                    success "wings.sh detected."
-                else
-                    error_msg "wings.sh missing."
-                fi
+                echo
 
-                if [[ -f "$SCRIPT_DIR/change.sh" ]]; then
-                    success "change.sh detected."
-                else
-                    warning "change.sh missing."
-                fi
+                check_remote_module() {
 
-                if [[ -f "$SCRIPT_DIR/update.sh" ]]; then
-                    success "update.sh detected."
-                else
-                    warning "update.sh missing."
-                fi
+                    local module="$1"
 
-                if [[ -f "$SCRIPT_DIR/remove.sh" ]]; then
-                    success "remove.sh detected."
-                else
-                    warning "remove.sh missing."
-                fi
+                    local url="${GITHUB_RAW}/${module}"
+
+                    if curl \
+                        --fail \
+                        --silent \
+                        --show-error \
+                        --location \
+                        --connect-timeout 5 \
+                        --max-time 10 \
+                        "$url" \
+                        -o /dev/null 2>/dev/null; then
+
+                        success "$module available."
+
+                    else
+
+                        error_msg "$module unavailable."
+
+                    fi
+                }
+
+                check_remote_module "panel.sh"
+                check_remote_module "wings.sh"
+                check_remote_module "change.sh"
+                check_remote_module "update.sh"
+                check_remote_module "remove.sh"
 
                 echo
 
@@ -739,6 +1019,10 @@ menu() {
 
                 ;;
 
+            # ==================================================
+            # EXIT
+            # ==================================================
+
             0)
 
                 clear_screen
@@ -747,12 +1031,16 @@ menu() {
 
                 spinner "Shutting down SubhanPlays Installer" 2
 
+                cleanup_temp_scripts
+
                 echo
 
                 echo -e "${GREEN}${BOLD}"
+
                 echo "╔══════════════════════════════════════════════════════════════╗"
                 echo "║        SUBHANPLAYS INSTALLER SHUTDOWN COMPLETE             ║"
                 echo "╚══════════════════════════════════════════════════════════════╝"
+
                 echo -e "${RESET}"
 
                 echo
@@ -761,9 +1049,14 @@ menu() {
 
                 ;;
 
+            # ==================================================
+            # INVALID
+            # ==================================================
+
             *)
 
                 error_msg "Invalid option: $choice"
+
                 sleep 1
 
                 ;;
@@ -788,6 +1081,7 @@ startup() {
     logo
 
     echo
+
     echo -e "${CYAN}${BOLD}"
 
     type_text "Initializing SubhanPlays Pterodactyl Installer..." 0.018
