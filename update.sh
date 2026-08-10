@@ -1,180 +1,275 @@
 #!/bin/bash
 
-# SubhanPlays Pterodactyl Installer - Update Manager
+# SubhanPlays Pterodactyl Installer - Configuration Manager
 # Version: 1.0.0
 
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/lib/common.sh"
+set -euo pipefail
+
+readonly RED='\033[0;31m'
+readonly GREEN='\033[0;32m'
+readonly YELLOW='\033[1;33m'
+readonly BLUE='\033[0;34m'
+readonly CYAN='\033[0;36m'
+readonly WHITE='\033[1;37m'
+readonly NC='\033[0m'
+readonly BOLD='\033[1m'
+
+readonly ICON_SUCCESS="✓"
+readonly ICON_ERROR="✖"
+readonly ICON_WARNING="⚠"
+readonly ICON_INFO="ℹ"
 
 PANEL_DIR="/var/www/pterodactyl"
-WINGS_DIR="/etc/pterodactyl"
-WINGS_BIN="/usr/local/bin/wings"
+
+check_root() {
+    if [[ $EUID -ne 0 ]]; then
+        echo -e "${RED}[${ICON_ERROR}] This script must be run as root${NC}"
+        exit 1
+    fi
+}
+
+validate_domain() {
+    if [[ $1 =~ ^[a-zA-Z0-9][a-zA-Z0-9\.-]*\.[a-zA-Z]{2,}$ ]]; then
+        return 0
+    fi
+    return 1
+}
+
+validate_email() {
+    if [[ $1 =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
+        return 0
+    fi
+    return 1
+}
+
+backup_file() {
+    local file=$1
+    if [[ -f "$file" ]]; then
+        local backup="${file}.backup.$(date +%Y%m%d_%H%M%S)"
+        cp "$file" "$backup"
+        echo -e "${GREEN}[${ICON_SUCCESS}] Backed up: $file -> $backup${NC}"
+        echo "$backup"
+    fi
+}
 
 display_menu() {
     clear
-    header "UPDATE MANAGER"
+    echo -e "${CYAN}${BOLD}CONFIGURATION MANAGEMENT${NC}"
     echo ""
-    echo -e "${WHITE}[1]${NC} Update Pterodactyl Panel"
-    echo -e "${WHITE}[2]${NC} Update Wings"
-    echo -e "${WHITE}[3]${NC} Update Both"
-    echo -e "${WHITE}[4]${NC} Back"
+    echo -e "${WHITE}[1]${NC} Change Panel Domain"
+    echo -e "${WHITE}[2]${NC} Change Admin Email"
+    echo -e "${WHITE}[3]${NC} Change Admin Password"
+    echo -e "${WHITE}[4]${NC} Change Admin Username"
+    echo -e "${WHITE}[5]${NC} Change Nginx Configuration"
+    echo -e "${WHITE}[6]${NC} Configure SSL"
+    echo -e "${WHITE}[7]${NC} Back"
     echo ""
 }
 
-update_panel() {
+change_domain() {
     clear
-    header "UPDATE PTERODACTYL PANEL"
+    echo -e "${CYAN}${BOLD}CHANGE PANEL DOMAIN${NC}"
     echo ""
     
     check_root
     
-    if [[ ! -d "$PANEL_DIR" ]]; then
-        error "Panel not found at $PANEL_DIR"
-        return 1
+    while true; do
+        read -p "Enter new domain: " NEW_DOMAIN
+        if validate_domain "$NEW_DOMAIN"; then
+            break
+        fi
+        echo -e "${RED}[${ICON_ERROR}] Invalid domain format${NC}"
+    done
+    
+    # Update .env file
+    if [[ -f "$PANEL_DIR/.env" ]]; then
+        backup_file "$PANEL_DIR/.env"
+        sed -i "s|APP_URL=.*|APP_URL=https://${NEW_DOMAIN}|" "$PANEL_DIR/.env"
+        echo -e "${GREEN}[${ICON_SUCCESS}] Panel configuration updated${NC}"
     fi
     
-    # Backup important files
-    info "Creating backup..."
-    backup_file "$PANEL_DIR/.env"
+    # Update Nginx configuration
+    if [[ -f "/etc/nginx/sites-available/pterodactyl.conf" ]]; then
+        backup_file "/etc/nginx/sites-available/pterodactyl.conf"
+        sed -i "s|server_name .*|server_name ${NEW_DOMAIN};|" /etc/nginx/sites-available/pterodactyl.conf
+        
+        if nginx -t > /dev/null 2>&1; then
+            systemctl reload nginx
+            echo -e "${GREEN}[${ICON_SUCCESS}] Nginx configuration updated${NC}"
+        else
+            echo -e "${RED}[${ICON_ERROR}] Nginx configuration test failed${NC}"
+            echo -e "${YELLOW}[${ICON_WARNING}] Restoring from backup...${NC}"
+            cp /etc/nginx/sites-available/pterodactyl.conf.backup.* /etc/nginx/sites-available/pterodactyl.conf 2>/dev/null
+            systemctl reload nginx
+        fi
+    fi
     
-    local backup_dir="/tmp/pterodactyl_backup_$(date +%Y%m%d_%H%M%S)"
-    mkdir -p "$backup_dir"
-    cp -r "$PANEL_DIR" "$backup_dir/"
-    success "Backup created: $backup_dir"
-    
-    # Enter maintenance mode
-    info "Entering maintenance mode..."
-    cd "$PANEL_DIR"
-    php artisan down > /dev/null 2>&1
-    
-    # Update panel
-    info "Downloading latest panel..."
-    
-    cd /tmp
-    curl -s https://api.github.com/repos/pterodactyl/panel/releases/latest | \
-        grep "tarball_url" | cut -d'"' -f4 | wget -q -i - -O panel-latest.tar.gz
-    
-    tar -xzf panel-latest.tar.gz -C /tmp
-    rm panel-latest.tar.gz
-    
-    # Find extracted directory
-    local extracted_dir=$(ls -d /tmp/pterodactyl-panel-*)
-    
-    # Copy new files
-    cp -rf "$extracted_dir"/* "$PANEL_DIR/"
-    rm -rf "$extracted_dir"
-    
-    # Restore .env
-    cp "$backup_dir/pterodactyl/.env" "$PANEL_DIR/.env"
-    
-    # Update dependencies
-    info "Updating dependencies..."
-    cd "$PANEL_DIR"
-    composer install --no-dev --optimize-autoloader > /dev/null 2>&1 &
-    spinner $!
-    
-    # Run migrations
-    info "Running database migrations..."
-    php artisan migrate --force > /dev/null 2>&1 &
-    spinner $!
+    # Configure SSL for new domain
+    read -p "Configure SSL for new domain? (y/n): " setup_ssl
+    if [[ "$setup_ssl" =~ ^[Yy]$ ]]; then
+        if command -v certbot &> /dev/null; then
+            certbot --nginx -d "$NEW_DOMAIN"
+        else
+            apt-get update > /dev/null 2>&1
+            apt-get install -y certbot python3-certbot-nginx > /dev/null 2>&1
+            certbot --nginx -d "$NEW_DOMAIN"
+        fi
+    fi
     
     # Clear cache
+    cd "$PANEL_DIR"
     php artisan config:cache > /dev/null 2>&1
     php artisan view:cache > /dev/null 2>&1
-    php artisan route:cache > /dev/null 2>&1
     
-    # Fix permissions
-    chown -R www-data:www-data "$PANEL_DIR"
-    chmod -R 755 "$PANEL_DIR/storage" "$PANEL_DIR/bootstrap/cache"
-    
-    # Exit maintenance mode
-    php artisan up > /dev/null 2>&1
-    
-    # Restart services
-    systemctl restart pteroq.service
-    
-    success "Panel updated successfully"
-    
-    # Verify panel is responding
-    info "Verifying panel..."
-    if curl -s -o /dev/null -w "%{http_code}" http://localhost | grep -q "200\|302"; then
-        success "Panel is responding"
-    else
-        warning "Panel might need additional configuration"
-    fi
-    
-    pause_screen
+    echo -e "${GREEN}[${ICON_SUCCESS}] Domain changed successfully${NC}"
+    read -p "Press Enter to continue..."
 }
 
-update_wings() {
+change_admin_email() {
     clear
-    header "UPDATE PTERODACTYL WINGS"
+    echo -e "${CYAN}${BOLD}CHANGE ADMIN EMAIL${NC}"
     echo ""
     
     check_root
     
-    if [[ ! -f "$WINGS_BIN" ]]; then
-        error "Wings not found at $WINGS_BIN"
-        return 1
-    fi
+    read -p "Enter admin username: " ADMIN_USERNAME
     
-    # Stop Wings
-    info "Stopping Wings..."
-    systemctl stop wings.service > /dev/null 2>&1
+    while true; do
+        read -p "Enter new email: " NEW_EMAIL
+        if validate_email "$NEW_EMAIL"; then
+            break
+        fi
+        echo -e "${RED}[${ICON_ERROR}] Invalid email format${NC}"
+    done
     
-    # Backup current binary
-    backup_file "$WINGS_BIN"
+    cd "$PANEL_DIR"
+    php artisan p:user:make --email="$NEW_EMAIL" --username="$ADMIN_USERNAME" \
+        --name-first="Admin" --name-last="User" --password="temp123" \
+        --admin=1 > /dev/null 2>&1
     
-    # Backup config
-    if [[ -f "$WINGS_DIR/config.yml" ]]; then
-        backup_file "$WINGS_DIR/config.yml"
-    fi
-    
-    # Download latest Wings
-    info "Downloading latest Wings..."
-    
-    local latest_wings=$(curl -s https://api.github.com/repos/pterodactyl/wings/releases/latest | \
-        grep "browser_download_url.*linux_amd64" | cut -d'"' -f4)
-    
-    download_file "$latest_wings" "$WINGS_BIN"
-    chmod u+x "$WINGS_BIN"
-    
-    # Start Wings
-    info "Starting Wings..."
-    systemctl start wings.service > /dev/null 2>&1 &
-    spinner $!
-    
-    sleep 3
-    
-    if systemctl is-active --quiet wings; then
-        success "Wings updated and running"
-    else
-        error "Wings failed to start"
-        error_exit "Check logs: journalctl -u wings" \
-            "Restore backup from: $WINGS_BIN.backup.*"
-    fi
-    
-    pause_screen
+    echo -e "${GREEN}[${ICON_SUCCESS}] Email updated. Please update password using option 3${NC}"
+    read -p "Press Enter to continue..."
 }
 
-update_both() {
-    update_panel
-    update_wings
+change_admin_password() {
+    clear
+    echo -e "${CYAN}${BOLD}CHANGE ADMIN PASSWORD${NC}"
+    echo ""
+    
+    check_root
+    
+    read -p "Enter admin username: " ADMIN_USERNAME
+    
+    while true; do
+        read -s -p "Enter new password: " NEW_PASSWORD
+        echo ""
+        read -s -p "Confirm new password: " NEW_PASSWORD_CONFIRM
+        echo ""
+        if [[ "$NEW_PASSWORD" == "$NEW_PASSWORD_CONFIRM" ]]; then
+            break
+        fi
+        echo -e "${RED}[${ICON_ERROR}] Passwords do not match${NC}"
+    done
+    
+    cd "$PANEL_DIR"
+    php artisan p:user:make --username="$ADMIN_USERNAME" \
+        --email="temp@temp.com" --name-first="Admin" --name-last="User" \
+        --password="$NEW_PASSWORD" --admin=1 > /dev/null 2>&1
+    
+    echo -e "${GREEN}[${ICON_SUCCESS}] Password changed successfully${NC}"
+    read -p "Press Enter to continue..."
+}
+
+change_admin_username() {
+    clear
+    echo -e "${CYAN}${BOLD}CHANGE ADMIN USERNAME${NC}"
+    echo ""
+    
+    check_root
+    
+    read -p "Enter current username: " CURRENT_USERNAME
+    read -p "Enter new username: " NEW_USERNAME
+    
+    cd "$PANEL_DIR"
+    php artisan p:user:make --username="$NEW_USERNAME" \
+        --email="temp@temp.com" --name-first="Admin" --name-last="User" \
+        --password="temp123" --admin=1 > /dev/null 2>&1
+    
+    echo -e "${GREEN}[${ICON_SUCCESS}] Username changed. Please update email and password${NC}"
+    read -p "Press Enter to continue..."
+}
+
+change_nginx_config() {
+    clear
+    echo -e "${CYAN}${BOLD}CHANGE NGINX CONFIGURATION${NC}"
+    echo ""
+    
+    check_root
+    
+    if [[ ! -f "/etc/nginx/sites-available/pterodactyl.conf" ]]; then
+        echo -e "${RED}[${ICON_ERROR}] Nginx configuration not found${NC}"
+        read -p "Press Enter to continue..."
+        return
+    fi
+    
+    backup_file "/etc/nginx/sites-available/pterodactyl.conf"
+    
+    echo -e "${CYAN}Opening Nginx configuration in editor...${NC}"
+    read -p "Press Enter to edit (nano will open)..."
+    nano /etc/nginx/sites-available/pterodactyl.conf
+    
+    if nginx -t > /dev/null 2>&1; then
+        systemctl reload nginx
+        echo -e "${GREEN}[${ICON_SUCCESS}] Nginx configuration updated and reloaded${NC}"
+    else
+        echo -e "${RED}[${ICON_ERROR}] Invalid Nginx configuration. Restoring backup...${NC}"
+        cp /etc/nginx/sites-available/pterodactyl.conf.backup.* /etc/nginx/sites-available/pterodactyl.conf 2>/dev/null
+        systemctl reload nginx
+    fi
+    
+    read -p "Press Enter to continue..."
+}
+
+configure_ssl() {
+    clear
+    echo -e "${CYAN}${BOLD}CONFIGURE SSL${NC}"
+    echo ""
+    
+    check_root
+    
+    if ! command -v certbot &> /dev/null; then
+        apt-get update > /dev/null 2>&1
+        apt-get install -y certbot python3-certbot-nginx > /dev/null 2>&1
+    fi
+    
+    read -p "Enter domain for SSL: " DOMAIN
+    
+    if validate_domain "$DOMAIN"; then
+        certbot --nginx -d "$DOMAIN"
+        echo -e "${GREEN}[${ICON_SUCCESS}] SSL configured${NC}"
+    else
+        echo -e "${RED}[${ICON_ERROR}] Invalid domain${NC}"
+    fi
+    
+    read -p "Press Enter to continue..."
 }
 
 # Main loop
 while true; do
     display_menu
     
-    read -p "Enter your choice [1-4]: " choice
+    read -p "Enter your choice [1-7]: " choice
     
     case $choice in
-        1) update_panel ;;
-        2) update_wings ;;
-        3) update_both ;;
-        4) break ;;
+        1) change_domain ;;
+        2) change_admin_email ;;
+        3) change_admin_password ;;
+        4) change_admin_username ;;
+        5) change_nginx_config ;;
+        6) configure_ssl ;;
+        7) break ;;
         *) 
-            error "Invalid option"
+            echo -e "${RED}[${ICON_ERROR}] Invalid option${NC}"
             sleep 1
             ;;
     esac
