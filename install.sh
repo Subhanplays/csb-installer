@@ -3,30 +3,54 @@
 # SubhanPlays Pterodactyl Installer - Main Menu
 # Version: 1.0.0
 
-# Source common functions
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/lib/common.sh"
+set -euo pipefail
 
-# Check for remote execution
-if [[ ! -f "$SCRIPT_DIR/panel.sh" ]] || [[ ! -f "$SCRIPT_DIR/wings.sh" ]]; then
-    info "Downloading required files..."
-    mkdir -p "$TMP_DIR"
-    
-    REPO_BASE="https://raw.githubusercontent.com/Subhanplays/csb-installer/main"
-    
-    for script in panel.sh wings.sh vps.sh change.sh update.sh remove.sh; do
-        if [[ ! -f "$SCRIPT_DIR/$script" ]]; then
-            download_file "$REPO_BASE/$script" "$TMP_DIR/$script"
-            SCRIPT_DIR="$TMP_DIR"
-        fi
-    done
-    
-    # Also download common library
-    mkdir -p "$TMP_DIR/lib"
-    download_file "$REPO_BASE/lib/common.sh" "$TMP_DIR/lib/common.sh"
-fi
+# Color definitions
+readonly RED='\033[0;31m'
+readonly GREEN='\033[0;32m'
+readonly YELLOW='\033[1;33m'
+readonly BLUE='\033[0;34m'
+readonly CYAN='\033[0;36m'
+readonly MAGENTA='\033[0;35m'
+readonly WHITE='\033[1;37m'
+readonly NC='\033[0m'
+readonly BOLD='\033[1m'
 
-# Display ASCII art header
+# Icons
+readonly ICON_SUCCESS="✓"
+readonly ICON_ERROR="✖"
+readonly ICON_WARNING="⚠"
+readonly ICON_INFO="ℹ"
+
+# Global variables
+readonly TMP_DIR="/tmp/subhanplays-pterodactyl"
+readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
+# Cleanup function
+cleanup() {
+    local exit_code=$?
+    if [[ -d "$TMP_DIR" ]]; then
+        rm -rf "$TMP_DIR"
+    fi
+    if [[ -f "/tmp/subhanplays-installer.lock" ]]; then
+        rm -f "/tmp/subhanplays-installer.lock"
+    fi
+    exit $exit_code
+}
+
+# Set traps
+trap cleanup EXIT INT TERM
+
+# Check root
+check_root() {
+    if [[ $EUID -ne 0 ]]; then
+        echo -e "${RED}[${ICON_ERROR}] ERROR: This script must be run as root${NC}" >&2
+        echo -e "${YELLOW}[${ICON_INFO}] Please run: sudo bash $0${NC}" >&2
+        exit 1
+    fi
+}
+
+# Display ASCII header
 display_header() {
     clear
     echo -e "${CYAN}"
@@ -62,39 +86,31 @@ display_menu() {
     echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 }
 
-# Full installation workflow
-full_installation() {
-    info "Starting full installation..."
-    echo ""
-    
-    # VPS
-    warning "VPS creation requires Docker and will run interactively"
-    if confirm_action "Do you want to create a VPS container?" "YES"; then
-        bash "$SCRIPT_DIR/vps.sh"
-    fi
-    
-    # Panel
-    info "Installing Pterodactyl Panel..."
-    if ! bash "$SCRIPT_DIR/panel.sh"; then
-        error "Panel installation failed"
+# Check if a script exists
+check_script() {
+    local script_name=$1
+    if [[ ! -f "$SCRIPT_DIR/$script_name" ]]; then
+        echo -e "${RED}[${ICON_ERROR}] ERROR: $script_name not found${NC}"
+        echo -e "${YELLOW}[${ICON_INFO}] All scripts must be in the same directory${NC}"
+        echo -e "${YELLOW}[${ICON_INFO}] Expected location: $SCRIPT_DIR/$script_name${NC}"
         return 1
     fi
-    
-    # Wings
-    info "Installing Pterodactyl Wings..."
-    if ! bash "$SCRIPT_DIR/wings.sh"; then
-        error "Wings installation failed"
-        return 1
-    fi
-    
-    success "Full installation completed!"
-    pause_screen
+    return 0
 }
 
 # Main loop
 main() {
-    create_lock
     check_root
+    
+    # Create lock file
+    if [[ -f "/tmp/subhanplays-installer.lock" ]]; then
+        local pid=$(cat /tmp/subhanplays-installer.lock)
+        if ps -p "$pid" > /dev/null 2>&1; then
+            echo -e "${RED}[${ICON_ERROR}] Another instance is already running (PID: $pid)${NC}"
+            exit 1
+        fi
+    fi
+    echo $$ > /tmp/subhanplays-installer.lock
     
     while true; do
         display_menu
@@ -104,54 +120,71 @@ main() {
         
         case $choice in
             1)
-                info "Launching VPS creation..."
-                bash "$SCRIPT_DIR/vps.sh"
-                pause_screen
+                if check_script "vps.sh"; then
+                    echo -e "${BLUE}[${ICON_INFO}] Launching VPS creation...${NC}"
+                    bash "$SCRIPT_DIR/vps.sh"
+                fi
+                read -p "Press Enter to continue..."
                 ;;
             2)
-                info "Installing Pterodactyl Panel..."
-                if bash "$SCRIPT_DIR/panel.sh"; then
-                    success "Panel installation completed"
-                else
-                    error "Panel installation failed"
+                if check_script "panel.sh"; then
+                    echo -e "${BLUE}[${ICON_INFO}] Installing Pterodactyl Panel...${NC}"
+                    bash "$SCRIPT_DIR/panel.sh"
                 fi
-                pause_screen
+                read -p "Press Enter to continue..."
                 ;;
             3)
-                info "Installing Pterodactyl Wings..."
-                if bash "$SCRIPT_DIR/wings.sh"; then
-                    success "Wings installation completed"
-                else
-                    error "Wings installation failed"
+                if check_script "wings.sh"; then
+                    echo -e "${BLUE}[${ICON_INFO}] Installing Pterodactyl Wings...${NC}"
+                    bash "$SCRIPT_DIR/wings.sh"
                 fi
-                pause_screen
+                read -p "Press Enter to continue..."
                 ;;
             4)
-                info "Opening configuration menu..."
-                bash "$SCRIPT_DIR/change.sh"
+                if check_script "change.sh"; then
+                    echo -e "${BLUE}[${ICON_INFO}] Opening configuration menu...${NC}"
+                    bash "$SCRIPT_DIR/change.sh"
+                fi
                 ;;
             5)
-                info "Opening update menu..."
-                bash "$SCRIPT_DIR/update.sh"
-                pause_screen
+                if check_script "update.sh"; then
+                    echo -e "${BLUE}[${ICON_INFO}] Opening update menu...${NC}"
+                    bash "$SCRIPT_DIR/update.sh"
+                fi
+                read -p "Press Enter to continue..."
                 ;;
             6)
-                info "Opening removal menu..."
-                bash "$SCRIPT_DIR/remove.sh"
-                pause_screen
+                if check_script "remove.sh"; then
+                    echo -e "${BLUE}[${ICON_INFO}] Opening removal menu...${NC}"
+                    bash "$SCRIPT_DIR/remove.sh"
+                fi
+                read -p "Press Enter to continue..."
                 ;;
             7)
-                full_installation
+                echo -e "${BLUE}[${ICON_INFO}] Starting full installation...${NC}"
+                if check_script "vps.sh"; then
+                    echo -e "${YELLOW}[${ICON_WARNING}] VPS creation requires Docker and will run interactively${NC}"
+                    read -p "Create VPS first? (y/n): " create_vps
+                    if [[ "$create_vps" =~ ^[Yy]$ ]]; then
+                        bash "$SCRIPT_DIR/vps.sh"
+                    fi
+                fi
+                if check_script "panel.sh"; then
+                    bash "$SCRIPT_DIR/panel.sh"
+                fi
+                if check_script "wings.sh"; then
+                    bash "$SCRIPT_DIR/wings.sh"
+                fi
+                read -p "Press Enter to continue..."
                 ;;
             8)
                 echo ""
                 echo -e "${GREEN}${BOLD}Thank you for using SubhanPlays Pterodactyl Installer!${NC}"
                 echo -e "${CYAN}Goodbye!${NC}"
-                cleanup
                 exit 0
                 ;;
             *)
-                error "Invalid option. Please choose 1-8"
+                echo -e "${RED}[${ICON_ERROR}] Invalid option. Please choose 1-8${NC}"
                 sleep 1
                 ;;
         esac
