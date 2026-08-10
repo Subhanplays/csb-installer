@@ -22,13 +22,26 @@ readonly ICON_ERROR="✖"
 readonly ICON_WARNING="⚠"
 readonly ICON_INFO="ℹ"
 
-# Global variables
+# Determine script directory
+if [[ -L "$0" ]] || [[ -f "$0" ]]; then
+    SCRIPT_DIR="$(cd -- "$(dirname -- "$0")" && pwd)"
+else
+    # Running from curl pipe, download to temp directory
+    SCRIPT_DIR="/tmp/subhanplays-pterodactyl-scripts"
+    mkdir -p "$SCRIPT_DIR"
+fi
+
+readonly SCRIPT_DIR
 readonly TMP_DIR="/tmp/subhanplays-pterodactyl"
-readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+readonly GITHUB_BASE="https://raw.githubusercontent.com/Subhanplays/csb-installer/main"
 
 # Cleanup function
 cleanup() {
     local exit_code=$?
+    # Only cleanup temp download directory if we created it
+    if [[ "$SCRIPT_DIR" == "/tmp/subhanplays-pterodactyl-scripts" ]]; then
+        rm -rf "$SCRIPT_DIR"
+    fi
     if [[ -d "$TMP_DIR" ]]; then
         rm -rf "$TMP_DIR"
     fi
@@ -47,6 +60,33 @@ check_root() {
         echo -e "${RED}[${ICON_ERROR}] ERROR: This script must be run as root${NC}" >&2
         echo -e "${YELLOW}[${ICON_INFO}] Please run: sudo bash $0${NC}" >&2
         exit 1
+    fi
+}
+
+# Download script if missing
+download_script() {
+    local script_name=$1
+    
+    # First check in current directory
+    if [[ -f "$SCRIPT_DIR/$script_name" ]]; then
+        return 0
+    fi
+    
+    # Try to download from GitHub
+    echo -e "${YELLOW}[${ICON_WARNING}] $script_name not found locally${NC}"
+    echo -e "${BLUE}[${ICON_INFO}] Downloading from GitHub...${NC}"
+    
+    mkdir -p "$SCRIPT_DIR"
+    
+    if curl -fsSL "${GITHUB_BASE}/${script_name}" -o "$SCRIPT_DIR/$script_name" 2>/dev/null; then
+        chmod +x "$SCRIPT_DIR/$script_name"
+        echo -e "${GREEN}[${ICON_SUCCESS}] Downloaded $script_name${NC}"
+        return 0
+    else
+        echo -e "${RED}[${ICON_ERROR}] Failed to download $script_name${NC}"
+        echo -e "${YELLOW}[${ICON_INFO}] Please download all scripts from:${NC}"
+        echo -e "${WHITE}${GITHUB_BASE}${NC}"
+        return 1
     fi
 }
 
@@ -86,16 +126,16 @@ display_menu() {
     echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 }
 
-# Check if a script exists
-check_script() {
+# Execute script with proper path
+run_script() {
     local script_name=$1
-    if [[ ! -f "$SCRIPT_DIR/$script_name" ]]; then
-        echo -e "${RED}[${ICON_ERROR}] ERROR: $script_name not found${NC}"
-        echo -e "${YELLOW}[${ICON_INFO}] All scripts must be in the same directory${NC}"
-        echo -e "${YELLOW}[${ICON_INFO}] Expected location: $SCRIPT_DIR/$script_name${NC}"
+    
+    if ! download_script "$script_name"; then
         return 1
     fi
-    return 0
+    
+    bash "$SCRIPT_DIR/$script_name"
+    return $?
 }
 
 # Main loop
@@ -120,61 +160,43 @@ main() {
         
         case $choice in
             1)
-                if check_script "vps.sh"; then
-                    echo -e "${BLUE}[${ICON_INFO}] Launching VPS creation...${NC}"
-                    bash "$SCRIPT_DIR/vps.sh"
-                fi
+                echo -e "${BLUE}[${ICON_INFO}] Launching VPS creation...${NC}"
+                run_script "vps.sh"
                 read -p "Press Enter to continue..."
                 ;;
             2)
-                if check_script "panel.sh"; then
-                    echo -e "${BLUE}[${ICON_INFO}] Installing Pterodactyl Panel...${NC}"
-                    bash "$SCRIPT_DIR/panel.sh"
-                fi
+                echo -e "${BLUE}[${ICON_INFO}] Installing Pterodactyl Panel...${NC}"
+                run_script "panel.sh"
                 read -p "Press Enter to continue..."
                 ;;
             3)
-                if check_script "wings.sh"; then
-                    echo -e "${BLUE}[${ICON_INFO}] Installing Pterodactyl Wings...${NC}"
-                    bash "$SCRIPT_DIR/wings.sh"
-                fi
+                echo -e "${BLUE}[${ICON_INFO}] Installing Pterodactyl Wings...${NC}"
+                run_script "wings.sh"
                 read -p "Press Enter to continue..."
                 ;;
             4)
-                if check_script "change.sh"; then
-                    echo -e "${BLUE}[${ICON_INFO}] Opening configuration menu...${NC}"
-                    bash "$SCRIPT_DIR/change.sh"
-                fi
+                echo -e "${BLUE}[${ICON_INFO}] Opening configuration menu...${NC}"
+                run_script "change.sh"
                 ;;
             5)
-                if check_script "update.sh"; then
-                    echo -e "${BLUE}[${ICON_INFO}] Opening update menu...${NC}"
-                    bash "$SCRIPT_DIR/update.sh"
-                fi
+                echo -e "${BLUE}[${ICON_INFO}] Opening update menu...${NC}"
+                run_script "update.sh"
                 read -p "Press Enter to continue..."
                 ;;
             6)
-                if check_script "remove.sh"; then
-                    echo -e "${BLUE}[${ICON_INFO}] Opening removal menu...${NC}"
-                    bash "$SCRIPT_DIR/remove.sh"
-                fi
+                echo -e "${BLUE}[${ICON_INFO}] Opening removal menu...${NC}"
+                run_script "remove.sh"
                 read -p "Press Enter to continue..."
                 ;;
             7)
                 echo -e "${BLUE}[${ICON_INFO}] Starting full installation...${NC}"
-                if check_script "vps.sh"; then
-                    echo -e "${YELLOW}[${ICON_WARNING}] VPS creation requires Docker and will run interactively${NC}"
-                    read -p "Create VPS first? (y/n): " create_vps
-                    if [[ "$create_vps" =~ ^[Yy]$ ]]; then
-                        bash "$SCRIPT_DIR/vps.sh"
-                    fi
+                echo -e "${YELLOW}[${ICON_WARNING}] VPS creation requires Docker and will run interactively${NC}"
+                read -p "Create VPS first? (y/n): " create_vps
+                if [[ "$create_vps" =~ ^[Yy]$ ]]; then
+                    run_script "vps.sh"
                 fi
-                if check_script "panel.sh"; then
-                    bash "$SCRIPT_DIR/panel.sh"
-                fi
-                if check_script "wings.sh"; then
-                    bash "$SCRIPT_DIR/wings.sh"
-                fi
+                run_script "panel.sh"
+                run_script "wings.sh"
                 read -p "Press Enter to continue..."
                 ;;
             8)
