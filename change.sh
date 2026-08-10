@@ -1,205 +1,241 @@
-#!/usr/bin/env bash
-set -Eeuo pipefail
+#!/bin/bash
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-CYAN='\033[0;36m'
-MAGENTA='\033[0;35m'
-BOLD='\033[1m'
-RESET='\033[0m'
+# SubhanPlays Pterodactyl Installer - Configuration Manager
+# Version: 1.0.0
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/common.sh"
 
 PANEL_DIR="/var/www/pterodactyl"
-ENV_FILE="$PANEL_DIR/.env"
-NGINX_FILE="/etc/nginx/sites-available/pterodactyl.conf"
 
-[[ $EUID -eq 0 ]] || {
-    echo -e "${RED}Run this script as root.${RESET}"
-    exit 1
-}
-
-if [[ ! -f "$ENV_FILE" ]]; then
-    echo -e "${RED}Pterodactyl Panel was not found.${RESET}"
-    echo "Expected: $ENV_FILE"
-    exit 1
-fi
-
-ask() {
-    local prompt="$1"
-    local value
-    read -r -p "$prompt" value
-    printf '%s' "$value"
-}
-
-update_env() {
-    local key="$1"
-    local value="$2"
-
-    if grep -qE "^${key}=" "$ENV_FILE"; then
-        sed -i "s|^${key}=.*|${key}=${value}|" "$ENV_FILE"
-    else
-        printf '\n%s=%s\n' "$key" "$value" >> "$ENV_FILE"
-    fi
-}
-
-get_admin() {
-    local email="$1"
-
-    php artisan tinker --execute="
-        \$u = App\\\\Models\\\\User::where('email', '$email')->first();
-        if (!\$u) { echo 'NOT_FOUND'; exit; }
-        echo \$u->id;
-    " 2>/dev/null | tr -d '\r\n'
-}
-
-change_username_email() {
-    local current_email new_username new_email user_id
-
-    current_email="$(ask "Current admin email: ")"
-    new_username="$(ask "New username: ")"
-    new_email="$(ask "New email [${current_email}]: ")"
-    new_email="${new_email:-$current_email}"
-
-    [[ -n "$current_email" ]] || { echo -e "${RED}Email cannot be empty.${RESET}"; return; }
-    [[ -n "$new_username" ]] || { echo -e "${RED}Username cannot be empty.${RESET}"; return; }
-
-    user_id="$(get_admin "$current_email")"
-
-    if [[ "$user_id" == "NOT_FOUND" || -z "$user_id" ]]; then
-        echo -e "${RED}Admin account not found.${RESET}"
-        return
-    fi
-
-    USER_ID="$user_id" NEW_USERNAME="$new_username" NEW_EMAIL="$new_email" \
-    php artisan tinker --execute='
-        $u = App\Models\User::findOrFail(getenv("USER_ID"));
-        $u->username = getenv("NEW_USERNAME");
-        $u->email = getenv("NEW_EMAIL");
-        $u->save();
-        echo "UPDATED";
-    '
-
-    echo
-    echo -e "${GREEN}Username/email updated successfully.${RESET}"
-}
-
-change_password() {
-    local email password password2 user_id
-
-    email="$(ask "Admin email: ")"
-    user_id="$(get_admin "$email")"
-
-    if [[ "$user_id" == "NOT_FOUND" || -z "$user_id" ]]; then
-        echo -e "${RED}Admin account not found.${RESET}"
-        return
-    fi
-
-    while true; do
-        read -r -s -p "New password: " password
-        echo
-        read -r -s -p "Confirm password: " password2
-        echo
-
-        if [[ "$password" != "$password2" ]]; then
-            echo -e "${RED}Passwords do not match.${RESET}"
-            continue
-        fi
-
-        if [[ ${#password} -lt 8 ]]; then
-            echo -e "${RED}Password must be at least 8 characters.${RESET}"
-            continue
-        fi
-
-        break
-    done
-
-    USER_ID="$user_id" NEW_PASSWORD="$password" \
-    php artisan tinker --execute='
-        $u = App\Models\User::findOrFail(getenv("USER_ID"));
-        $u->password = Illuminate\Support\Facades\Hash::make(getenv("NEW_PASSWORD"));
-        $u->save();
-        echo "UPDATED";
-    '
-
-    echo
-    echo -e "${GREEN}Password updated successfully.${RESET}"
+display_menu() {
+    clear
+    header "CONFIGURATION MANAGEMENT"
+    echo ""
+    echo -e "${WHITE}[1]${NC} Change Panel Domain"
+    echo -e "${WHITE}[2]${NC} Change Admin Email"
+    echo -e "${WHITE}[3]${NC} Change Admin Password"
+    echo -e "${WHITE}[4]${NC} Change Admin Username"
+    echo -e "${WHITE}[5]${NC} Change Nginx Configuration"
+    echo -e "${WHITE}[6]${NC} Configure SSL"
+    echo -e "${WHITE}[7]${NC} Back"
+    echo ""
 }
 
 change_domain() {
-    local old_domain new_domain
-
-    old_domain="$(grep -E '^server_name ' "$NGINX_FILE" 2>/dev/null | head -1 | sed -E 's/.*server_name[[:space:]]+([^;]+);.*/\1/' || true)"
-    new_domain="$(ask "New panel domain: ")"
-
-    if [[ ! "$new_domain" =~ ^[A-Za-z0-9.-]+$ ]]; then
-        echo -e "${RED}Invalid domain.${RESET}"
-        return
+    clear
+    header "CHANGE PANEL DOMAIN"
+    echo ""
+    
+    check_root
+    
+    while true; do
+        read -p "Enter new domain: " NEW_DOMAIN
+        if validate_domain "$NEW_DOMAIN"; then
+            break
+        fi
+        error "Invalid domain format"
+    done
+    
+    # Update .env file
+    if [[ -f "$PANEL_DIR/.env" ]]; then
+        backup_file "$PANEL_DIR/.env"
+        sed -i "s|APP_URL=.*|APP_URL=https://${NEW_DOMAIN}|" "$PANEL_DIR/.env"
+        success "Panel configuration updated"
     fi
-
-    update_env "APP_URL" "https://${new_domain}"
-
-    if [[ -f "$NGINX_FILE" ]]; then
-        sed -i -E "s/server_name[[:space:]]+[^;]+;/server_name ${new_domain};/" "$NGINX_FILE"
-
-        if nginx -t; then
+    
+    # Update Nginx configuration
+    if [[ -f "/etc/nginx/sites-available/pterodactyl.conf" ]]; then
+        backup_file "/etc/nginx/sites-available/pterodactyl.conf"
+        sed -i "s|server_name .*|server_name ${NEW_DOMAIN};|" /etc/nginx/sites-available/pterodactyl.conf
+        
+        if test_nginx_config; then
             systemctl reload nginx
+            success "Nginx configuration updated"
         else
-            echo -e "${RED}Nginx configuration test failed. Restoring domain setting is recommended.${RESET}"
-            return 1
+            error "Nginx configuration test failed"
+            error_exit "Restore from backup and fix manually" \
+                "Backup: /etc/nginx/sites-available/pterodactyl.conf.backup.*"
         fi
     fi
-
+    
+    # Configure SSL for new domain
+    echo -n "Configure SSL for new domain? (y/n): "
+    read -r setup_ssl
+    
+    if [[ "$setup_ssl" =~ ^[Yy]$ ]]; then
+        if check_command certbot; then
+            certbot --nginx -d "$NEW_DOMAIN"
+        else
+            install_packages certbot python3-certbot-nginx
+            certbot --nginx -d "$NEW_DOMAIN"
+        fi
+    fi
+    
+    # Clear cache
     cd "$PANEL_DIR"
-    php artisan config:clear
-    php artisan cache:clear 2>/dev/null || true
-
-    echo
-    echo -e "${GREEN}Domain changed successfully.${RESET}"
-    [[ -n "$old_domain" ]] && echo "Old domain: $old_domain"
-    echo "New domain: $new_domain"
-    echo
-    echo -e "${YELLOW}Important:${RESET} DNS for ${new_domain} must point to this server."
-    echo "If you use HTTPS, issue/update the certificate with Certbot."
+    php artisan config:cache > /dev/null 2>&1
+    php artisan view:cache > /dev/null 2>&1
+    
+    success "Domain changed successfully"
+    pause_screen
 }
 
-change_all() {
-    change_username_email
-    echo
-    change_password
-    echo
-    change_domain
-}
-
-menu() {
+change_admin_email() {
+    clear
+    header "CHANGE ADMIN EMAIL"
+    echo ""
+    
+    check_root
+    
+    read -p "Enter current admin username: " CURRENT_USERNAME
+    
     while true; do
-        clear || true
-        echo -e "${CYAN}${BOLD}"
-        echo "╔══════════════════════════════════════════════╗"
-        echo "║       PTERODACTYL ACCOUNT SETTINGS          ║"
-        echo "╚══════════════════════════════════════════════╝"
-        echo -e "${RESET}"
-        echo -e "${CYAN}1)${RESET} Change username + email"
-        echo -e "${CYAN}2)${RESET} Change password"
-        echo -e "${CYAN}3)${RESET} Change domain"
-        echo -e "${CYAN}4)${RESET} Change everything"
-        echo -e "${CYAN}5)${RESET} Back"
-        echo
-
-        read -r -p "Select [1-5]: " choice
-
-        case "$choice" in
-            1) change_username_email ;;
-            2) change_password ;;
-            3) change_domain ;;
-            4) change_all ;;
-            5) exit 0 ;;
-            *) echo -e "${RED}Invalid option.${RESET}" ;;
-        esac
-
-        echo
-        read -r -p "Press Enter to continue..."
+        read -p "Enter new email: " NEW_EMAIL
+        if validate_email "$NEW_EMAIL"; then
+            break
+        fi
+        error "Invalid email format"
     done
+    
+    cd "$PANEL_DIR"
+    php artisan p:user:disable "$CURRENT_USERNAME" > /dev/null 2>&1
+    php artisan p:user:make --email="$NEW_EMAIL" --username="$CURRENT_USERNAME" \
+        --name-first="Admin" --name-last="User" --password="temp123" \
+        --admin=1 > /dev/null 2>&1
+    
+    success "Email updated. Please update password using option 3"
+    pause_screen
 }
 
-cd "$PANEL_DIR"
-menu
+change_admin_password() {
+    clear
+    header "CHANGE ADMIN PASSWORD"
+    echo ""
+    
+    check_root
+    
+    read -p "Enter admin username: " ADMIN_USERNAME
+    
+    while true; do
+        read -s -p "Enter new password: " NEW_PASSWORD
+        echo ""
+        read -s -p "Confirm new password: " NEW_PASSWORD_CONFIRM
+        echo ""
+        if [[ "$NEW_PASSWORD" == "$NEW_PASSWORD_CONFIRM" ]]; then
+            break
+        fi
+        error "Passwords do not match"
+    done
+    
+    cd "$PANEL_DIR"
+    php artisan p:user:make --username="$ADMIN_USERNAME" \
+        --email="temp@temp.com" --name-first="Admin" --name-last="User" \
+        --password="$NEW_PASSWORD" --admin=1 > /dev/null 2>&1
+    
+    success "Password changed successfully"
+    pause_screen
+}
+
+change_admin_username() {
+    clear
+    header "CHANGE ADMIN USERNAME"
+    echo ""
+    
+    check_root
+    
+    read -p "Enter current username: " CURRENT_USERNAME
+    read -p "Enter new username: " NEW_USERNAME
+    
+    cd "$PANEL_DIR"
+    php artisan p:user:disable "$CURRENT_USERNAME" > /dev/null 2>&1
+    php artisan p:user:make --username="$NEW_USERNAME" \
+        --email="temp@temp.com" --name-first="Admin" --name-last="User" \
+        --password="temp123" --admin=1 > /dev/null 2>&1
+    
+    success "Username changed. Please update email and password"
+    pause_screen
+}
+
+change_nginx_config() {
+    clear
+    header "CHANGE NGINX CONFIGURATION"
+    echo ""
+    
+    check_root
+    
+    if [[ ! -f "/etc/nginx/sites-available/pterodactyl.conf" ]]; then
+        error "Nginx configuration not found"
+        pause_screen
+        return
+    fi
+    
+    # Create backup
+    backup_file "/etc/nginx/sites-available/pterodactyl.conf"
+    
+    echo -e "${CYAN}Opening Nginx configuration in editor...${NC}"
+    echo -e "${WHITE}Current configuration:${NC}"
+    echo ""
+    cat /etc/nginx/sites-available/pterodactyl.conf
+    echo ""
+    
+    read -p "Press Enter to edit (nano will open)..." 
+    nano /etc/nginx/sites-available/pterodactyl.conf
+    
+    if test_nginx_config; then
+        systemctl reload nginx
+        success "Nginx configuration updated and reloaded"
+    else
+        error "Invalid Nginx configuration. Restoring backup..."
+        cp "/etc/nginx/sites-available/pterodactyl.conf.backup."* \
+           /etc/nginx/sites-available/pterodactyl.conf
+        systemctl reload nginx
+        error "Backup restored"
+    fi
+    
+    pause_screen
+}
+
+configure_ssl() {
+    clear
+    header "CONFIGURE SSL"
+    echo ""
+    
+    check_root
+    
+    if ! check_command certbot; then
+        install_packages certbot python3-certbot-nginx
+    fi
+    
+    read -p "Enter domain for SSL: " DOMAIN
+    
+    if validate_domain "$DOMAIN"; then
+        certbot --nginx -d "$DOMAIN"
+        success "SSL configured"
+    else
+        error "Invalid domain"
+    fi
+    
+    pause_screen
+}
+
+# Main loop
+while true; do
+    display_menu
+    
+    read -p "Enter your choice [1-7]: " choice
+    
+    case $choice in
+        1) change_domain ;;
+        2) change_admin_email ;;
+        3) change_admin_password ;;
+        4) change_admin_username ;;
+        5) change_nginx_config ;;
+        6) configure_ssl ;;
+        7) break ;;
+        *) 
+            error "Invalid option"
+            sleep 1
+            ;;
+    esac
+done
