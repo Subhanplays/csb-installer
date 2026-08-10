@@ -3,24 +3,111 @@
 # SubhanPlays Pterodactyl Installer - Panel Installation
 # Version: 1.0.0
 
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/lib/common.sh"
+set -euo pipefail
 
-# Panel installation variables
+# Color definitions
+readonly RED='\033[0;31m'
+readonly GREEN='\033[0;32m'
+readonly YELLOW='\033[1;33m'
+readonly BLUE='\033[0;34m'
+readonly CYAN='\033[0;36m'
+readonly WHITE='\033[1;37m'
+readonly NC='\033[0m'
+readonly BOLD='\033[1m'
+
+# Icons
+readonly ICON_SUCCESS="✓"
+readonly ICON_ERROR="✖"
+readonly ICON_WARNING="⚠"
+readonly ICON_INFO="ℹ"
+readonly ICON_ARROW="→"
+
+# Variables
 PANEL_DIR="/var/www/pterodactyl"
-PANEL_REPO="https://github.com/pterodactyl/panel.git"
-PANEL_VERSION=""  # Will be set to latest release
+TMP_DIR="/tmp/subhanplays-pterodactyl"
 
+# Cleanup
+cleanup() {
+    if [[ -d "$TMP_DIR" ]]; then
+        rm -rf "$TMP_DIR"
+    fi
+}
+trap cleanup EXIT INT TERM
+
+# Helper functions
+spinner() {
+    local pid=$1
+    local delay=0.1
+    local spinstr='|/-\'
+    while ps -p $pid > /dev/null 2>&1; do
+        local temp=${spinstr#?}
+        printf " [%c]  " "$spinstr"
+        local spinstr=$temp${spinstr%"$temp"}
+        sleep $delay
+        printf "\b\b\b\b\b\b"
+    done
+    printf "    \b\b\b\b"
+    wait $pid
+    return $?
+}
+
+check_root() {
+    if [[ $EUID -ne 0 ]]; then
+        echo -e "${RED}[${ICON_ERROR}] This script must be run as root${NC}"
+        exit 1
+    fi
+}
+
+validate_domain() {
+    if [[ $1 =~ ^[a-zA-Z0-9][a-zA-Z0-9\.-]*\.[a-zA-Z]{2,}$ ]]; then
+        return 0
+    fi
+    return 1
+}
+
+validate_email() {
+    if [[ $1 =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
+        return 0
+    fi
+    return 1
+}
+
+backup_file() {
+    local file=$1
+    if [[ -f "$file" ]]; then
+        local backup="${file}.backup.$(date +%Y%m%d_%H%M%S)"
+        cp "$file" "$backup"
+        echo -e "${GREEN}[${ICON_SUCCESS}] Backed up: $file -> $backup${NC}"
+    fi
+}
+
+# Main installation
 install_panel() {
     clear
-    header "PTERODACTYL PANEL INSTALLATION"
+    echo -e "${CYAN}${BOLD}PTERODACTYL PANEL INSTALLATION${NC}"
     echo ""
     
-    # Check requirements
     check_root
-    detect_os
+    
+    # Detect OS
+    if [[ -f /etc/os-release ]]; then
+        . /etc/os-release
+        OS=$ID
+    else
+        echo -e "${RED}[${ICON_ERROR}] Cannot detect OS${NC}"
+        exit 1
+    fi
+    
+    if [[ "$OS" != "debian" ]] && [[ "$OS" != "ubuntu" ]]; then
+        echo -e "${RED}[${ICON_ERROR}] Unsupported OS: $OS${NC}"
+        echo -e "${YELLOW}This installer supports Debian and Ubuntu only${NC}"
+        exit 1
+    fi
+    
+    echo -e "${GREEN}[${ICON_SUCCESS}] Detected: $OS${NC}"
     
     # Get user input
+    echo ""
     echo -e "${CYAN}Panel Configuration:${NC}"
     echo ""
     
@@ -29,7 +116,7 @@ install_panel() {
         if validate_domain "$PANEL_DOMAIN"; then
             break
         fi
-        error "Invalid domain format"
+        echo -e "${RED}[${ICON_ERROR}] Invalid domain format${NC}"
     done
     
     while true; do
@@ -37,7 +124,7 @@ install_panel() {
         if validate_email "$ADMIN_EMAIL"; then
             break
         fi
-        error "Invalid email format"
+        echo -e "${RED}[${ICON_ERROR}] Invalid email format${NC}"
     done
     
     read -p "Enter admin username: " ADMIN_USERNAME
@@ -50,7 +137,7 @@ install_panel() {
         if [[ "$ADMIN_PASSWORD" == "$ADMIN_PASSWORD_CONFIRM" ]]; then
             break
         fi
-        error "Passwords do not match"
+        echo -e "${RED}[${ICON_ERROR}] Passwords do not match${NC}"
     done
     
     read -p "Enter database name [panel]: " DB_NAME
@@ -67,248 +154,136 @@ install_panel() {
         if [[ "$DB_PASS" == "$DB_PASS_CONFIRM" ]]; then
             break
         fi
-        error "Passwords do not match"
+        echo -e "${RED}[${ICON_ERROR}] Passwords do not match${NC}"
     done
     
     echo ""
-    info "Starting panel installation..."
+    echo -e "${BLUE}[${ICON_ARROW}] Starting panel installation...${NC}"
+    
+    # Update system
+    echo -e "${BLUE}[${ICON_ARROW}] Updating system packages...${NC}"
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -y > /dev/null 2>&1 &
+    spinner $!
     
     # Install dependencies
-    install_dependencies
+    echo -e "${BLUE}[${ICON_ARROW}] Installing dependencies...${NC}"
+    apt-get install -y curl wget git unzip tar software-properties-common \
+        apt-transport-https ca-certificates gnupg lsb-release > /dev/null 2>&1 &
+    spinner $!
     
     # Install MariaDB
-    install_mariadb
+    echo -e "${BLUE}[${ICON_ARROW}] Installing MariaDB...${NC}"
+    if ! command -v mysql &> /dev/null; then
+        curl -sS https://downloads.mariadb.com/MariaDB/mariadb_repo_setup | bash > /dev/null 2>&1
+        apt-get install -y mariadb-server mariadb-client > /dev/null 2>&1 &
+        spinner $!
+        systemctl start mariadb > /dev/null 2>&1
+        systemctl enable mariadb > /dev/null 2>&1
+    fi
     
     # Create database
-    create_database
-    
-    # Install PHP
-    install_php
-    
-    # Install Composer
-    install_composer
-    
-    # Install Nginx
-    install_nginx
-    
-    # Download and configure panel
-    download_panel
-    
-    # Configure environment
-    configure_environment
-    
-    # Install panel
-    run_panel_install
-    
-    # Configure services
-    configure_services
-    
-    # Configure Nginx
-    configure_nginx
-    
-    # Setup SSL
-    setup_ssl
-    
-    # Create admin user
-    create_admin_user
-    
-    # Final cleanup
-    final_cleanup
-    
-    # Display completion info
-    display_completion
-}
-
-install_dependencies() {
-    info "Installing system dependencies..."
-    
-    local deps=(
-        curl
-        wget
-        git
-        unzip
-        tar
-        software-properties-common
-        apt-transport-https
-        ca-certificates
-        gnupg
-        lsb-release
-    )
-    
-    install_packages "${deps[@]}"
-    progress_bar 2 "Dependencies installed"
-}
-
-install_mariadb() {
-    info "Installing MariaDB..."
-    
-    if check_command mariadb || check_command mysql; then
-        success "MariaDB/MySQL already installed"
-        return 0
-    fi
-    
-    curl -sS https://downloads.mariadb.com/MariaDB/mariadb_repo_setup | bash > /dev/null 2>&1
-    install_packages mariadb-server mariadb-client
-    
-    systemctl start mariadb > /dev/null 2>&1
-    systemctl enable mariadb > /dev/null 2>&1
-    
-    # Secure installation
+    echo -e "${BLUE}[${ICON_ARROW}] Creating database...${NC}"
     mysql -u root <<EOF > /dev/null 2>&1
-ALTER USER 'root'@'localhost' IDENTIFIED VIA mysql_native_password USING PASSWORD('');
+CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\`;
+CREATE USER IF NOT EXISTS '${DB_USER}'@'127.0.0.1' IDENTIFIED BY '${DB_PASS}';
+GRANT ALL PRIVILEGES ON \`${DB_NAME}\`.* TO '${DB_USER}'@'127.0.0.1';
 FLUSH PRIVILEGES;
 EOF
+    echo -e "${GREEN}[${ICON_SUCCESS}] Database created${NC}"
     
-    success "MariaDB installed and configured"
-}
-
-create_database() {
-    info "Creating database..."
-    
-    if create_mysql_db "$DB_NAME" "$DB_USER" "$DB_PASS"; then
-        success "Database created"
-    else
-        error_exit "Database creation failed" \
-            "Check MySQL logs: journalctl -u mariadb"
-    fi
-}
-
-install_php() {
-    info "Installing PHP and extensions..."
-    
-    # Add PHP repository
-    if ! check_command php; then
+    # Install PHP
+    echo -e "${BLUE}[${ICON_ARROW}] Installing PHP...${NC}"
+    if ! command -v php &> /dev/null; then
         add-apt-repository ppa:ondrej/php -y > /dev/null 2>&1
         apt-get update > /dev/null 2>&1
     fi
     
-    # Detect latest PHP version available
-    local php_version="8.3"
+    PHP_VERSION="8.3"
+    apt-get install -y php${PHP_VERSION} php${PHP_VERSION}-cli php${PHP_VERSION}-common \
+        php${PHP_VERSION}-curl php${PHP_VERSION}-gd php${PHP_VERSION}-mysql \
+        php${PHP_VERSION}-mbstring php${PHP_VERSION}-xml php${PHP_VERSION}-zip \
+        php${PHP_VERSION}-bcmath php${PHP_VERSION}-fpm php${PHP_VERSION}-redis > /dev/null 2>&1 &
+    spinner $!
     
-    local php_packages=(
-        "php${php_version}"
-        "php${php_version}-cli"
-        "php${php_version}-common"
-        "php${php_version}-curl"
-        "php${php_version}-gd"
-        "php${php_version}-mysql"
-        "php${php_version}-mbstring"
-        "php${php_version}-xml"
-        "php${php_version}-zip"
-        "php${php_version}-bcmath"
-        "php${php_version}-fpm"
-        "php${php_version}-redis"
-    )
-    
-    install_packages "${php_packages[@]}"
-    
-    # Detect installed PHP version
-    PHP_VERSION=$(detect_php_version)
     PHP_SOCKET="/run/php/php${PHP_VERSION}-fpm.sock"
+    echo -e "${GREEN}[${ICON_SUCCESS}] PHP ${PHP_VERSION} installed${NC}"
     
-    success "PHP ${PHP_VERSION} installed"
-}
-
-install_composer() {
-    info "Installing Composer..."
-    
-    if check_command composer; then
-        success "Composer already installed"
-        return 0
+    # Install Composer
+    echo -e "${BLUE}[${ICON_ARROW}] Installing Composer...${NC}"
+    if ! command -v composer &> /dev/null; then
+        php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');" > /dev/null 2>&1
+        php composer-setup.php --quiet > /dev/null 2>&1
+        rm composer-setup.php
+        mv composer.phar /usr/local/bin/composer
     fi
     
-    php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');" > /dev/null 2>&1
-    php composer-setup.php --quiet > /dev/null 2>&1
-    rm composer-setup.php
-    mv composer.phar /usr/local/bin/composer
-    
-    success "Composer installed"
-}
-
-install_nginx() {
-    info "Installing Nginx..."
-    
-    if check_command nginx; then
-        success "Nginx already installed"
-        return 0
+    # Install Nginx
+    echo -e "${BLUE}[${ICON_ARROW}] Installing Nginx...${NC}"
+    if ! command -v nginx &> /dev/null; then
+        apt-get install -y nginx > /dev/null 2>&1 &
+        spinner $!
+        systemctl start nginx > /dev/null 2>&1
+        systemctl enable nginx > /dev/null 2>&1
     fi
     
-    install_packages nginx
-    systemctl start nginx > /dev/null 2>&1
-    systemctl enable nginx > /dev/null 2>&1
-    
-    success "Nginx installed"
-}
-
-download_panel() {
-    info "Downloading Pterodactyl Panel..."
+    # Download panel
+    echo -e "${BLUE}[${ICON_ARROW}] Downloading Pterodactyl Panel...${NC}"
+    mkdir -p "$TMP_DIR"
+    cd "$TMP_DIR"
     
     if [[ -d "$PANEL_DIR" ]]; then
-        warning "Panel directory already exists"
-        if ! confirm_action "Do you want to overwrite existing installation?" "YES"; then
-            error_exit "Installation cancelled by user" ""
+        echo -e "${YELLOW}[${ICON_WARNING}] Panel directory already exists${NC}"
+        read -p "Overwrite? (y/n): " overwrite
+        if [[ "$overwrite" =~ ^[Yy]$ ]]; then
+            backup_file "$PANEL_DIR"
+            rm -rf "$PANEL_DIR"
+        else
+            exit 1
         fi
-        backup_file "$PANEL_DIR"
-        rm -rf "$PANEL_DIR"
     fi
     
     mkdir -p "$PANEL_DIR"
+    cd "$TMP_DIR"
     
-    # Get latest release
-    cd /tmp
+    # Download latest release
     curl -s https://api.github.com/repos/pterodactyl/panel/releases/latest | \
         grep "tarball_url" | cut -d'"' -f4 | wget -q -i - -O panel.tar.gz
     
     tar -xzf panel.tar.gz -C "$PANEL_DIR" --strip-components=1
     rm panel.tar.gz
+    echo -e "${GREEN}[${ICON_SUCCESS}] Panel downloaded${NC}"
     
-    success "Panel downloaded"
-}
-
-configure_environment() {
-    info "Configuring environment..."
-    
+    # Configure environment
+    echo -e "${BLUE}[${ICON_ARROW}] Configuring environment...${NC}"
     cd "$PANEL_DIR"
-    
     cp .env.example .env
     
-    # Generate app key
     php artisan key:generate --force > /dev/null 2>&1
     
-    # Update .env with database and other settings
     sed -i "s|DB_DATABASE=.*|DB_DATABASE=${DB_NAME}|" .env
     sed -i "s|DB_USERNAME=.*|DB_USERNAME=${DB_USER}|" .env
     sed -i "s|DB_PASSWORD=.*|DB_PASSWORD=${DB_PASS}|" .env
     sed -i "s|APP_URL=.*|APP_URL=https://${PANEL_DOMAIN}|" .env
     
-    success "Environment configured"
-}
-
-run_panel_install() {
-    info "Installing panel dependencies..."
+    echo -e "${GREEN}[${ICON_SUCCESS}] Environment configured${NC}"
     
-    cd "$PANEL_DIR"
-    
+    # Install dependencies
+    echo -e "${BLUE}[${ICON_ARROW}] Installing panel dependencies...${NC}"
     composer install --no-dev --optimize-autoloader > /dev/null 2>&1 &
     spinner $!
     
-    success "Dependencies installed"
-    
-    info "Setting up database..."
+    # Setup database
+    echo -e "${BLUE}[${ICON_ARROW}] Setting up database...${NC}"
     php artisan migrate --seed --force > /dev/null 2>&1 &
     spinner $!
     
-    success "Database migrated"
-}
-
-configure_services() {
-    info "Configuring services..."
-    
     # Set permissions
+    echo -e "${BLUE}[${ICON_ARROW}] Setting permissions...${NC}"
     chown -R www-data:www-data "$PANEL_DIR"
     chmod -R 755 "$PANEL_DIR/storage" "$PANEL_DIR/bootstrap/cache"
     
-    # Configure queue worker
+    # Configure queue service
     cat > /etc/systemd/system/pteroq.service <<EOF
 [Unit]
 Description=Pterodactyl Queue Worker
@@ -326,31 +301,17 @@ RestartSec=5s
 [Install]
 WantedBy=multi-user.target
 EOF
-
-    # Configure scheduler
-    cat > /etc/systemd/system/pteroq.service.d/override.conf <<EOF
-[Service]
-Environment="HOME=/var/www"
-EOF
-
-    # Add cron job
-    echo "* * * * * php $PANEL_DIR/artisan schedule:run >> /dev/null 2>&1" | \
-        crontab -u www-data -
     
     systemctl daemon-reload
     systemctl enable pteroq.service > /dev/null 2>&1
     systemctl start pteroq.service > /dev/null 2>&1
     
-    success "Services configured"
-}
-
-configure_nginx() {
-    info "Configuring Nginx..."
+    # Add cron job
+    echo "* * * * * php $PANEL_DIR/artisan schedule:run >> /dev/null 2>&1" | \
+        crontab -u www-data -
     
-    # Backup existing config if exists
-    if [[ -f "/etc/nginx/sites-enabled/pterodactyl.conf" ]]; then
-        backup_file "/etc/nginx/sites-enabled/pterodactyl.conf"
-    fi
+    # Configure Nginx
+    echo -e "${BLUE}[${ICON_ARROW}] Configuring Nginx...${NC}"
     
     cat > /etc/nginx/sites-available/pterodactyl.conf <<EOF
 server {
@@ -377,9 +338,6 @@ server {
         deny all;
     }
 
-    location = /favicon.ico { access_log off; log_not_found off; }
-    location = /robots.txt  { access_log off; log_not_found off; }
-
     access_log /var/log/nginx/pterodactyl.app-access.log;
     error_log  /var/log/nginx/pterodactyl.app-error.log error;
 
@@ -388,78 +346,43 @@ server {
     add_header X-Content-Type-Options "nosniff";
 }
 EOF
-
-    # Enable site
-    ln -sf /etc/nginx/sites-available/pterodactyl.conf /etc/nginx/sites-enabled/
     
-    # Remove default site if exists
+    ln -sf /etc/nginx/sites-available/pterodactyl.conf /etc/nginx/sites-enabled/
     rm -f /etc/nginx/sites-enabled/default
     
-    # Test and reload nginx
-    if test_nginx_config; then
+    if nginx -t > /dev/null 2>&1; then
         systemctl reload nginx > /dev/null 2>&1
-        success "Nginx configured"
+        echo -e "${GREEN}[${ICON_SUCCESS}] Nginx configured${NC}"
     else
-        error "Nginx configuration test failed"
-        error_exit "Please check /etc/nginx/sites-available/pterodactyl.conf" \
-            "Run: nginx -t"
-    fi
-}
-
-setup_ssl() {
-    info "Setting up SSL..."
-    
-    if ! check_command certbot; then
-        install_packages certbot python3-certbot-nginx
+        echo -e "${RED}[${ICON_ERROR}] Nginx configuration test failed${NC}"
+        exit 1
     fi
     
-    echo -e "${YELLOW}Do you want to configure SSL/HTTPS? (y/n)${NC}"
-    read -r ssl_choice
-    
-    if [[ "$ssl_choice" =~ ^[Yy]$ ]]; then
+    # Setup SSL
+    echo -e "${BLUE}[${ICON_ARROW}] Setting up SSL...${NC}"
+    read -p "Configure SSL/HTTPS? (y/n): " setup_ssl
+    if [[ "$setup_ssl" =~ ^[Yy]$ ]]; then
+        if ! command -v certbot &> /dev/null; then
+            apt-get install -y certbot python3-certbot-nginx > /dev/null 2>&1
+        fi
         certbot --nginx -d "$PANEL_DOMAIN" --non-interactive --agree-tos -m "$ADMIN_EMAIL" > /dev/null 2>&1 &
         spinner $!
-        
-        if [[ $? -eq 0 ]]; then
-            success "SSL configured successfully"
-        else
-            warning "SSL setup failed. You can run certbot manually later."
-        fi
     fi
-}
-
-create_admin_user() {
-    info "Creating admin user..."
     
+    # Create admin user
+    echo -e "${BLUE}[${ICON_ARROW}] Creating admin user...${NC}"
     cd "$PANEL_DIR"
-    
     php artisan p:user:make --email="$ADMIN_EMAIL" --username="$ADMIN_USERNAME" \
         --name-first="Admin" --name-last="User" --password="$ADMIN_PASSWORD" \
         --admin=1 > /dev/null 2>&1 &
     spinner $!
     
-    success "Admin user created"
-}
-
-final_cleanup() {
-    info "Cleaning up..."
-    
-    # Clear and cache config
-    cd "$PANEL_DIR"
+    # Clear cache
     php artisan config:cache > /dev/null 2>&1
     php artisan view:cache > /dev/null 2>&1
     php artisan route:cache > /dev/null 2>&1
     
-    # Fix permissions
-    chown -R www-data:www-data "$PANEL_DIR"
-    find "$PANEL_DIR" -type f -exec chmod 644 {} \;
-    find "$PANEL_DIR" -type d -exec chmod 755 {} \;
-    chmod -R 755 "$PANEL_DIR/storage" "$PANEL_DIR/bootstrap/cache"
-    
-    success "Cleanup completed"
-}
-
-display_completion() {
+    # Display completion
     clear
     echo ""
     echo -e "${GREEN}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
@@ -471,7 +394,7 @@ display_completion() {
     echo -e "${CYAN}Admin Username:${NC} ${WHITE}${ADMIN_USERNAME}${NC}"
     echo ""
     echo -e "${YELLOW}Important:${NC}"
-    echo -e "${WHITE}1. Configure your firewall to allow ports 80, 443, 8080, and 2022${NC}"
+    echo -e "${WHITE}1. Configure firewall to allow ports 80, 443, 8080, 2022${NC}"
     echo -e "${WHITE}2. Create a node in the panel before installing Wings${NC}"
     echo -e "${WHITE}3. Keep your credentials secure${NC}"
     echo ""
