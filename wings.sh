@@ -3,20 +3,69 @@
 # SubhanPlays Pterodactyl Installer - Wings Installation
 # Version: 1.0.0
 
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/lib/common.sh"
+set -euo pipefail
 
-# Wings configuration
+# Color definitions
+readonly RED='\033[0;31m'
+readonly GREEN='\033[0;32m'
+readonly YELLOW='\033[1;33m'
+readonly BLUE='\033[0;34m'
+readonly CYAN='\033[0;36m'
+readonly WHITE='\033[1;37m'
+readonly NC='\033[0m'
+readonly BOLD='\033[1m'
+
+# Icons
+readonly ICON_SUCCESS="✓"
+readonly ICON_ERROR="✖"
+readonly ICON_WARNING="⚠"
+readonly ICON_INFO="ℹ"
+readonly ICON_ARROW="→"
+
+# Variables
 WINGS_DIR="/etc/pterodactyl"
 WINGS_BIN="/usr/local/bin/wings"
+TMP_DIR="/tmp/subhanplays-pterodactyl"
 
+# Cleanup
+cleanup() {
+    if [[ -d "$TMP_DIR" ]]; then
+        rm -rf "$TMP_DIR"
+    fi
+}
+trap cleanup EXIT INT TERM
+
+# Helper functions
+spinner() {
+    local pid=$1
+    local delay=0.1
+    local spinstr='|/-\'
+    while ps -p $pid > /dev/null 2>&1; do
+        local temp=${spinstr#?}
+        printf " [%c]  " "$spinstr"
+        local spinstr=$temp${spinstr%"$temp"}
+        sleep $delay
+        printf "\b\b\b\b\b\b"
+    done
+    printf "    \b\b\b\b"
+    wait $pid
+    return $?
+}
+
+check_root() {
+    if [[ $EUID -ne 0 ]]; then
+        echo -e "${RED}[${ICON_ERROR}] This script must be run as root${NC}"
+        exit 1
+    fi
+}
+
+# Main installation
 install_wings() {
     clear
-    header "PTERODACTYL WINGS INSTALLATION"
+    echo -e "${CYAN}${BOLD}PTERODACTYL WINGS INSTALLATION${NC}"
     echo ""
     
     check_root
-    detect_os
     
     # Get panel URL
     while true; do
@@ -24,105 +73,65 @@ install_wings() {
         if [[ "$PANEL_URL" =~ ^https?:// ]]; then
             break
         fi
-        error "Invalid URL format. Must start with http:// or https://"
+        echo -e "${RED}[${ICON_ERROR}] Invalid URL format. Must start with http:// or https://${NC}"
     done
     
     read -p "Enter node name: " NODE_NAME
     
     echo ""
-    warning "IMPORTANT: You must create a node in the Pterodactyl Panel first!"
+    echo -e "${YELLOW}[${ICON_WARNING}] IMPORTANT: You must create a node in the Pterodactyl Panel first!${NC}"
     echo -e "${WHITE}1. Go to Admin Panel -> Nodes -> Create New${NC}"
     echo -e "${WHITE}2. Configure the node and generate a configuration${NC}"
     echo -e "${WHITE}3. Copy the configuration command or token${NC}"
     echo ""
-    
     read -p "Press Enter when ready..."
     
     # Install Docker
-    install_docker
-    
-    # Install Wings dependencies
-    install_dependencies
-    
-    # Install Wings
-    install_wings_binary
-    
-    # Configure Wings
-    configure_wings
-    
-    # Setup systemd service
-    setup_systemd
-    
-    # Start Wings
-    start_wings    
-    display_completion
-}
-
-install_docker() {
-    info "Checking Docker installation..."
-    
-    if check_docker; then
-        return 0
+    echo -e "${BLUE}[${ICON_ARROW}] Checking Docker...${NC}"
+    if ! command -v docker &> /dev/null; then
+        echo -e "${YELLOW}[${ICON_WARNING}] Docker not found. Installing...${NC}"
+        curl -fsSL https://get.docker.com | sh > /dev/null 2>&1 &
+        spinner $!
+        systemctl start docker > /dev/null 2>&1
+        systemctl enable docker > /dev/null 2>&1
     fi
     
-    warning "Docker not found. Installing..."
+    if ! docker info > /dev/null 2>&1; then
+        echo -e "${RED}[${ICON_ERROR}] Docker is not running${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}[${ICON_SUCCESS}] Docker is running${NC}"
     
-    curl -fsSL https://get.docker.com | sh > /dev/null 2>&1 &
+    # Install dependencies
+    echo -e "${BLUE}[${ICON_ARROW}] Installing dependencies...${NC}"
+    apt-get update -y > /dev/null 2>&1
+    apt-get install -y curl wget tar unzip > /dev/null 2>&1 &
     spinner $!
     
-    systemctl start docker > /dev/null 2>&1
-    systemctl enable docker > /dev/null 2>&1
+    # Download Wings
+    echo -e "${BLUE}[${ICON_ARROW}] Downloading Wings...${NC}"
+    mkdir -p "$TMP_DIR"
     
-    if check_docker; then
-        success "Docker installed successfully"
-    else
-        error_exit "Docker installation failed" \
-            "Please install Docker manually: https://docs.docker.com/engine/install/"
-    fi
-}
-
-install_dependencies() {
-    info "Installing Wings dependencies..."
-    
-    local deps=(
-        curl
-        wget
-        tar
-        unzip
-    )
-    
-    install_packages "${deps[@]}"
-}
-
-install_wings_binary() {
-    info "Installing Pterodactyl Wings..."
-    
-    # Download latest Wings binary
     local latest_wings=$(curl -s https://api.github.com/repos/pterodactyl/wings/releases/latest | \
         grep "browser_download_url.*linux_amd64" | cut -d'"' -f4)
     
     if [[ -f "$WINGS_BIN" ]]; then
-        backup_file "$WINGS_BIN"
+        cp "$WINGS_BIN" "${WINGS_BIN}.backup.$(date +%Y%m%d_%H%M%S)"
     fi
     
-    download_file "$latest_wings" "$WINGS_BIN"
+    wget -q -O "$WINGS_BIN" "$latest_wings"
     chmod u+x "$WINGS_BIN"
+    echo -e "${GREEN}[${ICON_SUCCESS}] Wings downloaded${NC}"
     
-    success "Wings binary installed"
-}
-
-configure_wings() {
-    info "Configuring Wings..."
-    
-    # Create directories
+    # Configure Wings
+    echo -e "${BLUE}[${ICON_ARROW}] Configuring Wings...${NC}"
     mkdir -p "$WINGS_DIR"
     mkdir -p /var/lib/pterodactyl/volumes
     
-    # Create initial config
     cat > "$WINGS_DIR/config.yml" <<EOF
 debug: false
 app_name: "${NODE_NAME}"
-uuid: "$(uuidgen || cat /proc/sys/kernel/random/uuid)"
+uuid: "$(cat /proc/sys/kernel/random/uuid)"
 token_id: ""
 token: ""
 api:
@@ -181,23 +190,11 @@ remote_query:
   timeout: 30
   boot_controllers: []
 EOF
-
-    success "Wings configured"
     
-    echo ""
-    warning "IMPORTANT: You must now configure Wings with your node token"
-    echo -e "${WHITE}1. Go to your Panel Admin area${NC}"
-    echo -e "${WHITE}2. Navigate to Nodes -> Your Node -> Configuration${NC}"
-    echo -e "${WHITE}3. Copy the configuration file content${NC}"
-    echo -e "${WHITE}4. Paste it into: ${WINGS_DIR}/config.yml${NC}"
-    echo ""
-    echo -e "${CYAN}After configuring, restart Wings with:${NC}"
-    echo -e "${WHITE}systemctl restart wings${NC}"
-}
-
-setup_systemd() {
-    info "Setting up Wings systemd service..."
+    echo -e "${GREEN}[${ICON_SUCCESS}] Wings configured${NC}"
     
+    # Setup systemd service
+    echo -e "${BLUE}[${ICON_ARROW}] Setting up systemd service...${NC}"
     cat > /etc/systemd/system/wings.service <<EOF
 [Unit]
 Description=Pterodactyl Wings Daemon
@@ -219,30 +216,25 @@ RestartSec=5s
 [Install]
 WantedBy=multi-user.target
 EOF
-
+    
     systemctl daemon-reload
     systemctl enable wings.service > /dev/null 2>&1
     
-    success "Systemd service configured"
-}
-
-start_wings() {
-    info "Starting Wings..."
-    
+    # Start Wings
+    echo -e "${BLUE}[${ICON_ARROW}] Starting Wings...${NC}"
     systemctl start wings.service > /dev/null 2>&1 &
     spinner $!
     
     sleep 3
     
     if systemctl is-active --quiet wings; then
-        success "Wings started successfully"
+        echo -e "${GREEN}[${ICON_SUCCESS}] Wings started successfully${NC}"
     else
-        warning "Wings might need configuration before starting"
-        warning "Check status with: systemctl status wings"
+        echo -e "${YELLOW}[${ICON_WARNING}] Wings might need configuration before starting${NC}"
+        echo -e "${YELLOW}Check status with: systemctl status wings${NC}"
     fi
-}
-
-display_completion() {
+    
+    # Display completion
     clear
     echo ""
     echo -e "${GREEN}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
